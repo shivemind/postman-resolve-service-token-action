@@ -80,6 +80,8 @@ Results:
 
 This confirms normal PMAK behavior is stable under modest concurrency and the action handles repeated auth failures without leaking secrets or causing workflow instability. The mocked unit suite also runs multiple successful service-account resolutions in parallel and verifies each invocation keeps its own token, Team ID, and expiry outputs isolated. For repo-secret refresh jobs, use a workflow `concurrency` group because overlapping refresh runs that write the same secret names are naturally last-writer-wins.
 
+`tests/test-many-users-simulation.sh` extends this with a local mocked high-concurrency drill. The default `SIM_USERS=100` run executes 400 user-runs total across service-account minting, provided-token passthrough, mixed inactive-key failures, and legacy PMAK baseline calls. It validates per-user output isolation, Team ID isolation, failure redaction, and token masking without sending load to production Postman APIs.
+
 ## Compatibility And Secret Refresh Findings
 
 Run `26606131433` added three explicit canaries:
@@ -158,7 +160,7 @@ The mocked suite validates token lifecycle behavior without live Postman calls:
 - service-account token responses can expose expiry metadata through `token-expires-at` and `token-expires-in`;
 - provided access-token flows skip minting and leave expiry outputs empty;
 - repeated service-account resolution mints a fresh token each run instead of reusing a prior output;
-- concurrent service-account resolutions keep token, Team ID, and expiry outputs isolated across parallel runs;
+- concurrent service-account resolutions keep token, Team ID, and expiry outputs isolated across parallel runs, including the 100-user-per-phase mocked simulation;
 - expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
 - single-membership `/me` responses can resolve Team ID from the membership list, while multi-team responses without a singular/current team fail and require `postman-team-id`;
 - disabled or deleted service-account keys fail at token mint with the Postman HTTP status and redacted response details;

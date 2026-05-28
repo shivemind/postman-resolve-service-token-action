@@ -230,10 +230,11 @@ Production is the default. `beta` is useful for internal validation but may requ
 ```bash
 tests/test-resolve-service-token.sh
 tests/test-github-actions-template-integration.sh
+SIM_USERS=100 tests/test-many-users-simulation.sh
 $(go env GOPATH)/bin/actionlint
 ```
 
-The test harnesses use mocked HTTP calls. `test-github-actions-template-integration.sh` verifies that the example template wires resolver outputs into a downstream CSE action, that provided-token flows skip minting, and that legacy PMAK-only downstream usage remains possible without invoking the resolver. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
+The test harnesses use mocked HTTP calls. `test-github-actions-template-integration.sh` verifies that the example template wires resolver outputs into a downstream CSE action, that provided-token flows skip minting, and that legacy PMAK-only downstream usage remains possible without invoking the resolver. `test-many-users-simulation.sh` runs concurrent mocked users across service-account, provided-token, mixed failure, and legacy PMAK paths; CI runs a smaller 25-user-per-phase version, while local validation can raise `SIM_USERS` for deeper stress checks. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
 
 For old-flow versus service-account workflow timing, see [`docs/performance-testing.md`](docs/performance-testing.md). For controlled pipeline war games and red-team scenarios, see [`docs/security-war-games.md`](docs/security-war-games.md).
 
