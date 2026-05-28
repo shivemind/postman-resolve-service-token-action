@@ -10,6 +10,7 @@ FAIL_COUNT=0
 TEST_API_KEY="PMAK-test-api-key"
 TEST_EXISTING_TOKEN="existing-access-token"
 TEST_MINTED_TOKEN="minted-access-token"
+TEST_EXPIRES_AT="2026-05-28T23:59:00Z"
 
 fail() {
   echo "not ok - $*"
@@ -147,6 +148,24 @@ case "$MOCK_SCENARIO:$url" in
   mint_success:*/me)
     write_response 200 '{"team":{"id":"team-minted"}}'
     ;;
+  lifecycle_metadata:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token","expires_in":900,"expires_at":"2026-05-28T23:59:00Z"}'
+    ;;
+  lifecycle_metadata:*/me)
+    write_response 200 '{"team":{"id":"team-minted"}}'
+    ;;
+  lifecycle_refresh_first:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token-first","expires_in":300,"expires_at":"2026-05-28T23:00:00Z"}'
+    ;;
+  lifecycle_refresh_first:*/me)
+    write_response 200 '{"team":{"id":"team-minted"}}'
+    ;;
+  lifecycle_refresh_second:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token-second","expires_in":300,"expires_at":"2026-05-28T23:05:00Z"}'
+    ;;
+  lifecycle_refresh_second:*/me)
+    write_response 200 '{"team":{"id":"team-minted"}}'
+    ;;
   token_passthrough:*service-account-tokens)
     echo "service-account-tokens should not have been called" >&2
     exit 91
@@ -180,6 +199,9 @@ case "$MOCK_SCENARIO:$url" in
     ;;
   bearer_only_unauthorized:*/me)
     write_response 401 '{"error":{"name":"unauthorizedError","message":"You are not authorized to perform this action for existing-access-token."},"authorization":"Bearer existing-access-token"}'
+    ;;
+  expired_provided_token:*/me)
+    write_response 401 '{"error":{"name":"expiredTokenError","message":"The provided access token has expired."},"authorization":"Bearer existing-access-token"}'
     ;;
   invalid_key:*service-account-tokens)
     write_response 401 '{"error":{"message":"inactive key PMAK-test-api-key Bearer minted-access-token","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log","authorization":"Bearer minted-access-token","auth":{"token":"minted-access-token"}}}}'
@@ -461,6 +483,37 @@ test_service_account_api_key_to_access_token() {
     assert_contains "$case_dir/github_output" "team-id=team-minted"
 }
 
+test_service_account_token_lifecycle_metadata_outputs() {
+  local case_dir
+  case_dir="$(run_resolve "service_account_token_lifecycle_metadata_outputs" "lifecycle_metadata" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "token=$TEST_MINTED_TOKEN" &&
+    assert_contains "$case_dir/github_output" "token-expires-in=900" &&
+    assert_contains "$case_dir/github_output" "token-expires-at=$TEST_EXPIRES_AT" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_service_account_refresh_mints_new_token() {
+  local first_dir
+  local second_dir
+  first_dir="$(run_resolve "service_account_refresh_first" "lifecycle_refresh_first" "$TEST_API_KEY" "" "" "success")"
+  second_dir="$(run_resolve "service_account_refresh_second" "lifecycle_refresh_second" "$TEST_API_KEY" "" "" "success")"
+
+  local first_token
+  local second_token
+  first_token="$(grep '^access-token=' "$first_dir/github_output" | cut -d= -f2-)"
+  second_token="$(grep '^access-token=' "$second_dir/github_output" | cut -d= -f2-)"
+
+  test "$first_token" = "minted-access-token-first" &&
+    test "$second_token" = "minted-access-token-second" &&
+    test "$first_token" != "$second_token" &&
+    assert_contains "$first_dir/github_output" "skipped=false" &&
+    assert_contains "$second_dir/github_output" "skipped=false" &&
+    assert_contains "$first_dir/github_output" "token-expires-at=2026-05-28T23:00:00Z" &&
+    assert_contains "$second_dir/github_output" "token-expires-at=2026-05-28T23:05:00Z" &&
+    assert_secret_only_masked_in_log "$first_dir/run.log" "$first_token" &&
+    assert_secret_only_masked_in_log "$second_dir/run.log" "$second_token"
+}
+
 test_numeric_team_id_resolution() {
   local case_dir
   case_dir="$(run_resolve "numeric_team_id_resolution" "numeric_team_id" "$TEST_API_KEY" "" "" "success")"
@@ -474,8 +527,19 @@ test_access_token_already_provided() {
   assert_contains "$case_dir/github_output" "skipped=true" &&
     assert_contains "$case_dir/github_output" "auth-method=provided-access-token" &&
     assert_contains "$case_dir/github_output" "token=$TEST_EXISTING_TOKEN" &&
+    assert_contains "$case_dir/github_output" "token-expires-at=" &&
+    assert_contains "$case_dir/github_output" "token-expires-in=" &&
     assert_contains "$case_dir/github_output" "team-id=team-existing" &&
     assert_contains "$case_dir/run.log" "Skipped mint - using provided postman-access-token." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
+}
+
+test_expired_provided_access_token_fails_without_minting() {
+  local case_dir
+  case_dir="$(run_resolve "expired_provided_access_token_fails_without_minting" "expired_provided_token" "" "$TEST_EXISTING_TOKEN" "" "failure")"
+  assert_contains "$case_dir/run.log" "Skipped mint - using provided postman-access-token." &&
+    assert_contains "$case_dir/run.log" "::error::/me failed (HTTP 401) while resolving team ID from postman-access-token." &&
+    assert_contains "$case_dir/run.log" "expiredTokenError" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
 }
 
@@ -665,8 +729,11 @@ for test_name in \
   test_invalid_stack_input \
   test_pmak_only_legacy_path \
   test_service_account_api_key_to_access_token \
+  test_service_account_token_lifecycle_metadata_outputs \
+  test_service_account_refresh_mints_new_token \
   test_numeric_team_id_resolution \
   test_access_token_already_provided \
+  test_expired_provided_access_token_fails_without_minting \
   test_provided_team_id_skips_lookup \
   test_access_token_with_api_key_team_lookup \
   test_token_endpoint_success_without_token \

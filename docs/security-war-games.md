@@ -123,6 +123,16 @@ The mocked unit harness now treats token safety as a required behavior:
 - `/me` success bodies that do not contain a Team ID are omitted because they may include account metadata;
 - `gh secret set` tests verify the token/team values are passed via stdin and not written to the mock command log.
 
+## Token Lifecycle Coverage
+
+The mocked suite validates token lifecycle behavior without live Postman calls:
+
+- service-account token responses can expose expiry metadata through `token-expires-at` and `token-expires-in`;
+- provided access-token flows skip minting and leave expiry outputs empty;
+- repeated service-account resolution mints a fresh token each run instead of reusing a prior output;
+- expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
+- secret refresh continues to write the configured repo secret names with the resolved token and Team ID while keeping token values masked.
+
 ## Customer Failure-Mode Coverage
 
 The mocked unit suite now covers the failure modes customers are most likely to hit during setup and migration:

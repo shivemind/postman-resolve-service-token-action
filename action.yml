@@ -49,6 +49,12 @@ outputs:
   auth-method:
     description: "Resolved auth path: provided-access-token or service-account-api-key."
     value: ${{ steps.resolve.outputs.auth-method }}
+  token-expires-at:
+    description: Expiration timestamp returned by the service-account token endpoint when available. Empty for provided access tokens or endpoint responses without expiry metadata.
+    value: ${{ steps.resolve.outputs.token-expires-at }}
+  token-expires-in:
+    description: Token lifetime in seconds returned by the service-account token endpoint when available. Empty for provided access tokens or endpoint responses without lifetime metadata.
+    value: ${{ steps.resolve.outputs.token-expires-in }}
 runs:
   using: composite
   steps:

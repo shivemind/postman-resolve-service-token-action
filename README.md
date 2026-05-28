@@ -152,6 +152,8 @@ This repository is a GitHub composite action, so Azure DevOps should not consume
 | `team-id` | Resolved Postman team ID. Either looked up via `/me` or passed through from `postman-team-id`. |
 | `skipped` | `'true'` when the mint step was skipped because `postman-access-token` was provided. |
 | `auth-method` | `provided-access-token` or `service-account-api-key`. |
+| `token-expires-at` | Expiration timestamp returned by the service-account token endpoint when available. Empty for provided access tokens or endpoint responses without expiry metadata. |
+| `token-expires-in` | Token lifetime in seconds returned by the service-account token endpoint when available. Empty for provided access tokens or endpoint responses without lifetime metadata. |
 
 ## Token And Team Resolution
 
@@ -160,6 +162,7 @@ When `postman-access-token` is provided:
 - the action does not call `/service-account-tokens`;
 - the provided token is masked;
 - `skipped` is set to `true`;
+- expiry outputs are empty because the action did not mint the token;
 - `/me` is called only if `postman-team-id` was not provided;
 - if Bearer-only `/me` returns `401`, provide `postman-team-id` explicitly. This is expected for short-lived service-account tokens in current production validation.
 
@@ -168,6 +171,7 @@ When only `postman-api-key` is provided:
 - the action calls `POST /service-account-tokens` on the selected Postman stack;
 - the API key is sent in both the `x-api-key` header and JSON body for compatibility with the existing endpoint behavior;
 - the generated access token is masked and exposed as `token` and `access-token`;
+- `token-expires-at` and `token-expires-in` are populated when the token endpoint returns expiry metadata;
 - `/me` is called with the minted token and service-account API key to resolve the team ID.
 
 ## Secret Handling

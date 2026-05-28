@@ -140,6 +140,8 @@ if [ -n "$EXISTING_TOKEN" ]; then
   write_output "auth-method" "provided-access-token"
   write_output "token" "$EXISTING_TOKEN"
   write_output "access-token" "$EXISTING_TOKEN"
+  write_output "token-expires-at" ""
+  write_output "token-expires-in" ""
   TOKEN="$EXISTING_TOKEN"
   echo "Skipped mint - using provided postman-access-token."
 else
@@ -183,6 +185,10 @@ else
   mask_if_set "$TOKEN"
   write_output "token" "$TOKEN"
   write_output "access-token" "$TOKEN"
+  TOKEN_EXPIRES_AT="$(printf '%s' "$RESPONSE" | jq -r '.expires_at // .expiresAt // .expiration // .expiresAtUtc // empty')"
+  TOKEN_EXPIRES_IN="$(printf '%s' "$RESPONSE" | jq -r '.expires_in // .expiresIn // .expires // empty | tostring')"
+  write_output "token-expires-at" "$TOKEN_EXPIRES_AT"
+  write_output "token-expires-in" "$TOKEN_EXPIRES_IN"
 fi
 
 if [ -n "$EXISTING_TEAM_ID" ]; then
