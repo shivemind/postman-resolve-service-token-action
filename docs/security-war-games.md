@@ -123,6 +123,28 @@ The mocked unit harness now treats token safety as a required behavior:
 - `/me` success bodies that do not contain a Team ID are omitted because they may include account metadata;
 - `gh secret set` tests verify the token/team values are passed via stdin and not written to the mock command log.
 
+## Customer Failure-Mode Coverage
+
+The mocked unit suite now covers the failure modes customers are most likely to hit during setup and migration:
+
+| Failure | Expected behavior |
+| --- | --- |
+| Missing `postman-api-key` and missing `postman-access-token` | Fails before network calls with a required-input message. |
+| Invalid `postman-stack` | Fails before network calls and lists supported stack values. |
+| Normal/customer PMAK sent to service-token endpoint | Fails with the Postman HTTP status and redacted response. |
+| Token endpoint returns success without a token | Fails with `Mint succeeded but no access token in response`. |
+| Token endpoint returns malformed JSON | Fails with `Mint succeeded but token response was not valid JSON`. |
+| Provided `postman-team-id` | Skips `/me` lookup and returns the provided Team ID. |
+| Bearer-only `/me` rejects provided token | Fails with guidance to provide `postman-team-id` or `postman-api-key`. |
+| `/me` rejects service-account Team ID lookup | Fails with the HTTP status and redacted error summary. |
+| `/me` network timeout/error | Fails with `Network error calling /me`. |
+| `/me` returns malformed JSON | Fails with `/me succeeded but response was not valid JSON`. |
+| `/me` returns JSON without Team ID | Fails with guidance to provide `postman-team-id` and omits account metadata. |
+| Secret refresh missing GitHub token | Fails before `gh secret set`. |
+| Secret refresh missing repo context | Fails before `gh secret set`. |
+| Secret refresh missing resolved token or Team ID | Fails before `gh secret set`. |
+| Runner without `gh` CLI | Fails with a clear runner setup message. |
+
 ## Full Pipeline War Game
 
 After downstream templates are ready to accept the resolved access token:

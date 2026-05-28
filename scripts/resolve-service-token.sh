@@ -71,6 +71,10 @@ sanitize_response() {
 summarize_me_response() {
   local body="$1"
   if command -v jq >/dev/null 2>&1; then
+    if ! printf '%s' "$body" | jq -e . >/dev/null 2>&1; then
+      printf '%s\n' '[unparseable /me response omitted]'
+      return
+    fi
     if printf '%s' "$body" | jq -e 'has("error") or has("errors") or has("status") or has("title") or has("detail")' >/dev/null 2>&1; then
       local summary
       summary="$(printf '%s' "$body" | jq '
@@ -166,7 +170,11 @@ else
     exit 1
   fi
 
-  TOKEN="$(printf '%s' "$RESPONSE" | jq -r '.access_token // .accessToken // .token // .session.token // empty')"
+  if ! TOKEN="$(printf '%s' "$RESPONSE" | jq -r '.access_token // .accessToken // .token // .session.token // empty')"; then
+    log_error "Mint succeeded but token response was not valid JSON"
+    sanitize_response "$RESPONSE"
+    exit 1
+  fi
   if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
     log_error "Mint succeeded but no access token in response"
     sanitize_response "$RESPONSE"
@@ -212,7 +220,7 @@ else
     exit 1
   fi
 
-  TEAM_ID="$(printf '%s' "$ME_BODY" | jq -r '
+  if ! TEAM_ID="$(printf '%s' "$ME_BODY" | jq -r '
     def team_value:
       if type == "string" then
         .
@@ -241,7 +249,11 @@ else
     | map(team_value)
     | map(select(. != "" and . != "null"))
     | .[0] // empty
-  ')"
+  ' 2>/dev/null)"; then
+    log_error "/me succeeded but response was not valid JSON"
+    summarize_me_response "$ME_BODY"
+    exit 1
+  fi
   if [ -z "$TEAM_ID" ] || [ "$TEAM_ID" = "null" ]; then
     log_error "Could not read team id from /me response. Provide postman-team-id to skip Team ID lookup."
     summarize_me_response "$ME_BODY"

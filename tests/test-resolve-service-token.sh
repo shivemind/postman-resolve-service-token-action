@@ -154,6 +154,10 @@ case "$MOCK_SCENARIO:$url" in
   token_passthrough:*/me)
     write_response 200 '{"user":{"teamId":"team-existing"}}'
     ;;
+  provided_team_id_skips_me:*/me)
+    echo "/me should not have been called when postman-team-id is provided" >&2
+    exit 92
+    ;;
   token_passthrough_with_api_key:*/me)
     if has_header "x-api-key: PMAK-test-api-key"; then
       write_response 200 '{"team":{"id":"team-from-api-key-lookup"}}'
@@ -179,6 +183,31 @@ case "$MOCK_SCENARIO:$url" in
     ;;
   invalid_key:*service-account-tokens)
     write_response 401 '{"error":{"message":"inactive key PMAK-test-api-key Bearer minted-access-token","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log","authorization":"Bearer minted-access-token","auth":{"token":"minted-access-token"}}}}'
+    ;;
+  no_token:*service-account-tokens)
+    write_response 200 '{"token_type":"bearer"}'
+    ;;
+  malformed_token_response:*service-account-tokens)
+    write_response 200 '<html>not json</html>'
+    ;;
+  me_unauthorized:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  me_unauthorized:*/me)
+    write_response 403 '{"error":{"name":"forbiddenError","message":"Team lookup forbidden for Bearer minted-access-token"},"authorization":"Bearer minted-access-token"}'
+    ;;
+  me_network_error:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  me_network_error:*/me)
+    echo "curl: (28) Operation timed out" >&2
+    exit 28
+    ;;
+  malformed_me_response:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  malformed_me_response:*/me)
+    write_response 200 'not-json'
     ;;
   no_team:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token"}'
@@ -239,6 +268,47 @@ run_resolve() {
   printf '%s\n' "$case_dir"
 }
 
+run_resolve_with_stack() {
+  local name="$1"
+  local scenario="$2"
+  local api_key="$3"
+  local access_token="$4"
+  local team_id="$5"
+  local stack="$6"
+  local expected_status="$7"
+  local case_dir="$TMP_DIR/$name"
+  local bin_dir="$case_dir/bin"
+  mkdir -p "$bin_dir"
+  install_fake_curl "$bin_dir"
+
+  local output_file="$case_dir/github_output"
+  local log_file="$case_dir/run.log"
+  set +e
+  PATH="$bin_dir:$PATH" \
+  MOCK_SCENARIO="$scenario" \
+  POSTMAN_API_KEY="$api_key" \
+  EXISTING_TOKEN="$access_token" \
+  EXISTING_TEAM_ID="$team_id" \
+  STACK="$stack" \
+  GITHUB_OUTPUT="$output_file" \
+    bash "$ROOT_DIR/scripts/resolve-service-token.sh" > "$log_file" 2>&1
+  local status=$?
+  set -e
+
+  if [ "$expected_status" = "success" ] && [ "$status" -ne 0 ]; then
+    echo "Expected success but got exit $status"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+  if [ "$expected_status" = "failure" ] && [ "$status" -eq 0 ]; then
+    echo "Expected failure but got success"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+
+  printf '%s\n' "$case_dir"
+}
+
 run_resolve_with_stdout_outputs() {
   local name="$1"
   local scenario="$2"
@@ -278,6 +348,73 @@ run_resolve_with_stdout_outputs() {
   printf '%s\n' "$case_dir"
 }
 
+run_write_github_secrets() {
+  local name="$1"
+  local gh_token="$2"
+  local repo="$3"
+  local token="$4"
+  local team_id="$5"
+  local install_gh="${6:-yes}"
+  local expected_status="$7"
+  local case_dir="$TMP_DIR/$name"
+  local bin_dir="$case_dir/bin"
+  local log_file="$case_dir/run.log"
+  local gh_log="$case_dir/gh.log"
+  mkdir -p "$bin_dir"
+
+  if [ "$install_gh" = "yes" ]; then
+    cat > "$bin_dir/gh" <<'GH'
+#!/bin/bash
+set -euo pipefail
+payload="$(cat)"
+printf 'gh %s payload_length=%s\n' "$*" "${#payload}" >> "$MOCK_GH_LOG"
+GH
+    chmod +x "$bin_dir/gh"
+  fi
+  local run_path="$bin_dir"
+  if [ "$install_gh" = "yes" ]; then
+    run_path="$bin_dir:/bin:/usr/bin"
+  fi
+
+  set +e
+  PATH="$run_path" \
+  MOCK_GH_LOG="$gh_log" \
+  GH_TOKEN="$gh_token" \
+  REPO="$repo" \
+  TOKEN="$token" \
+  TEAM_ID="$team_id" \
+  ACCESS_TOKEN_SECRET_NAME="POSTMAN_ACCESS_TOKEN" \
+  TEAM_ID_SECRET_NAME="POSTMAN_TEAM_ID" \
+    /bin/bash "$ROOT_DIR/scripts/write-github-secrets.sh" > "$log_file" 2>&1
+  local status=$?
+  set -e
+
+  if [ "$expected_status" = "success" ] && [ "$status" -ne 0 ]; then
+    echo "Expected success but got exit $status"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+  if [ "$expected_status" = "failure" ] && [ "$status" -eq 0 ]; then
+    echo "Expected failure but got success"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+
+  printf '%s\n' "$case_dir"
+}
+
+test_missing_required_auth_inputs() {
+  local case_dir
+  case_dir="$(run_resolve "missing_required_auth_inputs" "mint_success" "" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::postman-api-key is required when postman-access-token is not provided."
+}
+
+test_invalid_stack_input() {
+  local case_dir
+  case_dir="$(run_resolve_with_stack "invalid_stack_input" "mint_success" "$TEST_API_KEY" "" "" "staging" "failure")"
+  assert_contains "$case_dir/run.log" "::error::postman-stack must be one of: prod, beta; got: staging"
+}
+
 test_pmak_only_legacy_path() {
   local case_dir
   case_dir="$(run_resolve "pmak_only_legacy_path" "mint_success" "$TEST_API_KEY" "" "" "success")"
@@ -315,6 +452,14 @@ test_access_token_already_provided() {
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
 }
 
+test_provided_team_id_skips_lookup() {
+  local case_dir
+  case_dir="$(run_resolve "provided_team_id_skips_lookup" "provided_team_id_skips_me" "" "$TEST_EXISTING_TOKEN" "team-known" "success")"
+  assert_contains "$case_dir/github_output" "skipped=true" &&
+    assert_contains "$case_dir/github_output" "team-id=team-known" &&
+    assert_contains "$case_dir/run.log" "Using provided postman-team-id."
+}
+
 test_access_token_with_api_key_team_lookup() {
   local case_dir
   case_dir="$(run_resolve "access_token_with_api_key_team_lookup" "token_passthrough_with_api_key" "$TEST_API_KEY" "$TEST_EXISTING_TOKEN" "" "success")"
@@ -322,6 +467,21 @@ test_access_token_with_api_key_team_lookup() {
     assert_contains "$case_dir/github_output" "auth-method=provided-access-token" &&
     assert_contains "$case_dir/github_output" "team-id=team-from-api-key-lookup" &&
     assert_not_contains "$case_dir/run.log" "service-account-tokens should not have been called"
+}
+
+test_token_endpoint_success_without_token() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_success_without_token" "no_token" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Mint succeeded but no access token in response" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
+}
+
+test_token_endpoint_malformed_json() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_malformed_json" "malformed_token_response" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Mint succeeded but token response was not valid JSON" &&
+    assert_contains "$case_dir/run.log" "[unparseable response omitted]" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
 }
 
 test_bearer_only_team_id_fallback() {
@@ -339,6 +499,32 @@ test_bearer_only_team_id_fallback_failure_message() {
     assert_contains "$case_dir/run.log" "[REDACTED]" &&
     assert_not_contains "$case_dir/run.log" "Bearer $TEST_EXISTING_TOKEN" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
+}
+
+test_me_lookup_forbidden_with_service_account() {
+  local case_dir
+  case_dir="$(run_resolve "me_lookup_forbidden_with_service_account" "me_unauthorized" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::/me failed (HTTP 403) while resolving team ID." &&
+    assert_contains "$case_dir/run.log" "forbiddenError" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
+}
+
+test_me_lookup_network_error() {
+  local case_dir
+  case_dir="$(run_resolve "me_lookup_network_error" "me_network_error" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Network error calling /me" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_me_lookup_malformed_json() {
+  local case_dir
+  case_dir="$(run_resolve "me_lookup_malformed_json" "malformed_me_response" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::/me succeeded but response was not valid JSON" &&
+    assert_contains "$case_dir/run.log" "[unparseable /me response omitted]" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
 }
 
 test_invalid_or_inactive_api_key_response() {
@@ -381,28 +567,10 @@ test_network_error() {
 }
 
 test_write_github_secrets_masks_token_and_writes_expected_names() {
-  local case_dir="$TMP_DIR/write_github_secrets"
-  local bin_dir="$case_dir/bin"
+  local case_dir
+  case_dir="$(run_write_github_secrets "write_github_secrets" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "success")"
   local log_file="$case_dir/run.log"
   local gh_log="$case_dir/gh.log"
-  mkdir -p "$bin_dir"
-  cat > "$bin_dir/gh" <<'GH'
-#!/usr/bin/env bash
-set -euo pipefail
-payload="$(cat)"
-printf 'gh %s payload_length=%s\n' "$*" "${#payload}" >> "$MOCK_GH_LOG"
-GH
-  chmod +x "$bin_dir/gh"
-
-  PATH="$bin_dir:$PATH" \
-  MOCK_GH_LOG="$gh_log" \
-  GH_TOKEN="github-token-test" \
-  REPO="postman-cs/example" \
-  TOKEN="$TEST_MINTED_TOKEN" \
-  TEAM_ID="team-minted" \
-  ACCESS_TOKEN_SECRET_NAME="POSTMAN_ACCESS_TOKEN" \
-  TEAM_ID_SECRET_NAME="POSTMAN_TEAM_ID" \
-    bash "$ROOT_DIR/scripts/write-github-secrets.sh" > "$log_file" 2>&1
 
   assert_contains "$log_file" "Wrote secrets: POSTMAN_ACCESS_TOKEN, POSTMAN_TEAM_ID" &&
     assert_secret_only_masked_in_log "$log_file" "$TEST_MINTED_TOKEN" &&
@@ -412,20 +580,59 @@ GH
     assert_not_contains "$gh_log" "team-minted"
 }
 
+test_secret_refresh_missing_github_token() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_missing_github_token" "" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure")"
+  assert_contains "$case_dir/run.log" "::error::github-token is required when write-github-secret is 'true'." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_secret_refresh_missing_repo() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_missing_repo" "github-token-test" "" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure")"
+  assert_contains "$case_dir/run.log" "::error::github.repository is required to write repo secrets." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_secret_refresh_missing_resolved_values() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_missing_resolved_values" "github-token-test" "postman-cs/example" "" "" "yes" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Resolved token and team ID are required to write repo secrets."
+}
+
+test_secret_refresh_missing_gh_cli() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_missing_gh_cli" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "no" "failure")"
+  assert_contains "$case_dir/run.log" "::error::gh CLI not found on runner." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
 for test_name in \
+  test_missing_required_auth_inputs \
+  test_invalid_stack_input \
   test_pmak_only_legacy_path \
   test_service_account_api_key_to_access_token \
   test_numeric_team_id_resolution \
   test_access_token_already_provided \
+  test_provided_team_id_skips_lookup \
   test_access_token_with_api_key_team_lookup \
+  test_token_endpoint_success_without_token \
+  test_token_endpoint_malformed_json \
   test_bearer_only_team_id_fallback \
   test_bearer_only_team_id_fallback_failure_message \
+  test_me_lookup_forbidden_with_service_account \
+  test_me_lookup_network_error \
+  test_me_lookup_malformed_json \
   test_invalid_or_inactive_api_key_response \
   test_generated_token_masked_before_stdout_output \
   test_provided_token_masked_before_stdout_output \
   test_unable_to_resolve_team_id \
   test_network_error \
-  test_write_github_secrets_masks_token_and_writes_expected_names
+  test_write_github_secrets_masks_token_and_writes_expected_names \
+  test_secret_refresh_missing_github_token \
+  test_secret_refresh_missing_repo \
+  test_secret_refresh_missing_resolved_values \
+  test_secret_refresh_missing_gh_cli
 do
   if "$test_name"; then
     pass "$test_name"
