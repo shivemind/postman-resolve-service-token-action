@@ -195,6 +195,8 @@ $(go env GOPATH)/bin/actionlint
 
 The test harness uses mocked HTTP calls. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
 
+For old-flow versus service-account workflow timing, see [`docs/performance-testing.md`](docs/performance-testing.md).
+
 ## Migration Lift
 
 For GitHub Actions templates, the expected lift is low to moderate:
