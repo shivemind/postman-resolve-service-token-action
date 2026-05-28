@@ -125,6 +125,12 @@ jobs:
 
 Use action outputs for downstream steps in the same workflow run. Refreshed repo secrets are intended for later workflow runs after the refresh completes. Use a workflow `concurrency` group so overlapping scheduled or manual refresh runs do not race to update the same secret names. Schedule refresh with a buffer shorter than the token TTL reported by `token-expires-in` / `token-expires-at`.
 
+### Fork And PR Safety
+
+Do not run this action with Postman or secret-write credentials on untrusted fork pull requests. Use `workflow_dispatch`, `schedule`, or trusted-branch `push` for customer-facing automations that read `secrets.POSTMAN_API_KEY`, `secrets.POSTMAN_ACCESS_TOKEN`, or `secrets.SECRETS_WRITE_PAT`.
+
+Avoid `pull_request_target` for workflows that check out and execute PR code. If a validation workflow must run on `pull_request`, keep it secret-free and read-only, like this repository's CI. Fork PRs should exercise mocked tests only; the resolver will fail before network calls when required secret inputs are absent.
+
 ### Azure DevOps Adaptation Notes
 
 This repository is a GitHub composite action, so Azure DevOps should not consume it directly. After the GitHub path is validated, port the same shell behavior into an ADO template step:

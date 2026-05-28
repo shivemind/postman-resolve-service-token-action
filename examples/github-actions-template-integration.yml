@@ -3,6 +3,9 @@ name: Postman CSE automation
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   run-postman-automation:
     runs-on: ubuntu-latest

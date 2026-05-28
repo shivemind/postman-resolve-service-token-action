@@ -164,6 +164,7 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Secret refresh missing resolved token or Team ID | Fails before `gh secret set`. |
 | Secret refresh timing metadata | Writes the configured secrets while preserving token expiry outputs for refresh-cadence checks. |
 | Concurrent resolver invocations | Parallel runs keep output files isolated and do not cross-contaminate token or Team ID values. |
+| Fork pull request without secrets | Secret-consuming examples do not run on `pull_request`; repo PR CI stays mocked, read-only, and free of customer secrets. |
 | Runner without `gh` CLI | Fails with a clear runner setup message. |
 | GitHub token lacks repo secret write permission | Fails with a clear `Failed to write GitHub secret ...` message. |
 
@@ -227,6 +228,7 @@ scripts/compare-workflow-performance.sh \
 | Generated token output | Token is masked with `::add-mask::`. |
 | Secret-refresh mode without GitHub token | Action fails before attempting writes. |
 | Secret-refresh mode with scoped token | Writes only configured secret names. |
+| Fork PR / untrusted contribution | Do not expose Postman or secret-write credentials; run only mocked, read-only PR validation and avoid `pull_request_target` with checked-out PR code. |
 | Downstream action compatibility | Existing PMAK input still works; access-token input is additive. |
 
 ## Service Account Improvements Suggested By Testing

@@ -198,6 +198,29 @@ test_example_workflow_wires_resolver_outputs_to_downstream() {
     assert_contains "$example" "postman-team-id: \${{ steps.postman_auth.outputs.team-id }}"
 }
 
+test_example_workflow_is_not_fork_pr_secret_entrypoint() {
+  local example="$ROOT_DIR/examples/github-actions-template-integration.yml"
+  assert_contains "$example" "workflow_dispatch:" &&
+    assert_contains "$example" "permissions:" &&
+    assert_contains "$example" "contents: read" &&
+    assert_not_contains "$example" "pull_request:" &&
+    assert_not_contains "$example" "pull_request_target:" &&
+    assert_not_contains "$example" "write-github-secret: 'true'" &&
+    assert_not_contains "$example" "github-token:"
+}
+
+test_ci_pull_request_workflow_does_not_reference_customer_secrets() {
+  local ci="$ROOT_DIR/.github/workflows/ci.yml"
+  assert_contains "$ci" "pull_request:" &&
+    assert_contains "$ci" "permissions:" &&
+    assert_contains "$ci" "contents: read" &&
+    assert_not_contains "$ci" "pull_request_target:" &&
+    assert_not_contains "$ci" "secrets." &&
+    assert_not_contains "$ci" "POSTMAN_API_KEY" &&
+    assert_not_contains "$ci" "POSTMAN_ACCESS_TOKEN" &&
+    assert_not_contains "$ci" "write-github-secret"
+}
+
 test_service_account_resolution_feeds_downstream_template() {
   local case_dir
   case_dir="$(run_resolver_like_template "service_account_template" "service_account" "$TEST_API_KEY" "" "")"
@@ -290,6 +313,8 @@ test_downstream_template_accepts_required_workspace_role() {
 
 for test_name in \
   test_example_workflow_wires_resolver_outputs_to_downstream \
+  test_example_workflow_is_not_fork_pr_secret_entrypoint \
+  test_ci_pull_request_workflow_does_not_reference_customer_secrets \
   test_service_account_resolution_feeds_downstream_template \
   test_provided_access_token_template_skips_mint_and_feeds_downstream \
   test_legacy_pmak_only_template_path_still_works_without_resolver \
