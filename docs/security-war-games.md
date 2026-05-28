@@ -145,6 +145,17 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Secret refresh missing resolved token or Team ID | Fails before `gh secret set`. |
 | Runner without `gh` CLI | Fails with a clear runner setup message. |
 
+## GitHub Actions Template Integration Coverage
+
+`tests/test-github-actions-template-integration.sh` validates the customer-facing workflow shape without calling live Postman APIs:
+
+- the example workflow includes a `postman_auth` resolver step;
+- downstream CSE automation receives `steps.postman_auth.outputs.access-token`;
+- downstream CSE automation receives `steps.postman_auth.outputs.team-id`;
+- service-account PMAK resolution feeds the downstream action as access-token auth;
+- provided access-token plus Team ID skips minting and still feeds downstream;
+- legacy PMAK-only downstream auth still works without invoking the resolver.
+
 ## Full Pipeline War Game
 
 After downstream templates are ready to accept the resolved access token:

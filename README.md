@@ -204,10 +204,11 @@ Production is the default. `beta` is useful for internal validation but may requ
 
 ```bash
 tests/test-resolve-service-token.sh
+tests/test-github-actions-template-integration.sh
 $(go env GOPATH)/bin/actionlint
 ```
 
-The test harness uses mocked HTTP calls. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
+The test harnesses use mocked HTTP calls. `test-github-actions-template-integration.sh` verifies that the example template wires resolver outputs into a downstream CSE action, that provided-token flows skip minting, and that legacy PMAK-only downstream usage remains possible without invoking the resolver. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
 
 For old-flow versus service-account workflow timing, see [`docs/performance-testing.md`](docs/performance-testing.md). For controlled pipeline war games and red-team scenarios, see [`docs/security-war-games.md`](docs/security-war-games.md).
 
