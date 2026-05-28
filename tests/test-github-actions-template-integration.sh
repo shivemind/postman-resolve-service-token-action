@@ -168,6 +168,27 @@ simulate_downstream_cse_template() {
   } > "$log_file"
 }
 
+simulate_downstream_cse_template_with_workspace_role() {
+  local case_dir="$1"
+  local api_key="$2"
+  local access_token="$3"
+  local team_id="$4"
+  local workspace_role="$5"
+  local required_role="${6:-Admin}"
+  local log_file="$case_dir/downstream-role.log"
+
+  {
+    test -n "$api_key"
+    test -n "$access_token"
+    test -n "$team_id"
+    if [ "$workspace_role" != "$required_role" ]; then
+      echo "::error::Postman service account requires $required_role role on the target workspace; got ${workspace_role:-unassigned}."
+      return 1
+    fi
+    echo "workspace_role_ok=true"
+  } > "$log_file"
+}
+
 test_example_workflow_wires_resolver_outputs_to_downstream() {
   local example="$ROOT_DIR/examples/github-actions-template-integration.yml"
   assert_contains "$example" "id: postman_auth" &&
@@ -235,11 +256,45 @@ test_legacy_pmak_only_template_path_still_works_without_resolver() {
     assert_contains "$case_dir/downstream.log" "team_id_present=false"
 }
 
+test_downstream_template_surfaces_workspace_role_gap() {
+  local case_dir
+  case_dir="$(run_resolver_like_template "workspace_role_template" "service_account" "$TEST_API_KEY" "" "")"
+
+  local access_token
+  local team_id
+  access_token="$(get_output "$case_dir/outputs" "access-token")"
+  team_id="$(get_output "$case_dir/outputs" "team-id")"
+
+  set +e
+  simulate_downstream_cse_template_with_workspace_role "$case_dir" "$TEST_API_KEY" "$access_token" "$team_id" "" "Admin"
+  local status=$?
+  set -e
+
+  test "$status" -ne 0 &&
+    assert_contains "$case_dir/downstream-role.log" "::error::Postman service account requires Admin role on the target workspace; got unassigned."
+}
+
+test_downstream_template_accepts_required_workspace_role() {
+  local case_dir
+  case_dir="$(run_resolver_like_template "workspace_role_ok_template" "service_account" "$TEST_API_KEY" "" "")"
+
+  local access_token
+  local team_id
+  access_token="$(get_output "$case_dir/outputs" "access-token")"
+  team_id="$(get_output "$case_dir/outputs" "team-id")"
+
+  simulate_downstream_cse_template_with_workspace_role "$case_dir" "$TEST_API_KEY" "$access_token" "$team_id" "Admin" "Admin"
+
+  assert_contains "$case_dir/downstream-role.log" "workspace_role_ok=true"
+}
+
 for test_name in \
   test_example_workflow_wires_resolver_outputs_to_downstream \
   test_service_account_resolution_feeds_downstream_template \
   test_provided_access_token_template_skips_mint_and_feeds_downstream \
-  test_legacy_pmak_only_template_path_still_works_without_resolver
+  test_legacy_pmak_only_template_path_still_works_without_resolver \
+  test_downstream_template_surfaces_workspace_role_gap \
+  test_downstream_template_accepts_required_workspace_role
 do
   if "$test_name"; then
     pass "$test_name"

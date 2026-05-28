@@ -189,6 +189,8 @@ The action fails with explicit GitHub Actions errors when:
 - the token endpoint succeeds but does not return an access token;
 - `/me` succeeds but no team ID can be read from the response;
 - Bearer-only `/me` rejects a provided access token and no `postman-team-id` was supplied;
+- Postman returns `403` because the service account lacks the required team/workspace role or permission;
+- GitHub secret refresh fails because `github-token` cannot write repo Actions secrets;
 - `gh` is unavailable when secret writing is enabled.
 
 ## Stack Selection
@@ -233,6 +235,7 @@ For GitHub Actions templates, the expected lift is low to moderate:
 - Secret-writing mode introduces a GitHub PAT or App-token management requirement.
 - Bearer-only `/me` team ID resolution depends on Postman's token type support. Validated short-lived service-account tokens currently need either `postman-team-id` or same-step resolution with the service-account PMAK.
 - Downstream templates must preserve PMAK fallback behavior until customer migrations are complete.
+- Service accounts must be assigned to the target team/workspaces with the roles required by each downstream CSE automation; token resolution alone does not grant workspace access.
 - Access-token TTL and refresh cadence need to be aligned with long-running or scheduled customer workflows.
 
 ## Open-Alpha Release Strategy

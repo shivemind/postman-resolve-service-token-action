@@ -32,6 +32,15 @@ if ! command -v gh >/dev/null 2>&1; then
   exit 1
 fi
 
-printf '%s' "$TOKEN" | gh secret set "$ACCESS_TOKEN_SECRET_NAME" --repo "$REPO"
-printf '%s' "$TEAM_ID" | gh secret set "$TEAM_ID_SECRET_NAME" --repo "$REPO"
+write_secret() {
+  local name="$1"
+  local value="$2"
+  if ! printf '%s' "$value" | gh secret set "$name" --repo "$REPO"; then
+    echo "::error::Failed to write GitHub secret $name. Ensure github-token has repo Actions secrets write permission for $REPO."
+    exit 1
+  fi
+}
+
+write_secret "$ACCESS_TOKEN_SECRET_NAME" "$TOKEN"
+write_secret "$TEAM_ID_SECRET_NAME" "$TEAM_ID"
 echo "Wrote secrets: $ACCESS_TOKEN_SECRET_NAME, $TEAM_ID_SECRET_NAME"

@@ -184,6 +184,9 @@ case "$MOCK_SCENARIO:$url" in
   invalid_key:*service-account-tokens)
     write_response 401 '{"error":{"message":"inactive key PMAK-test-api-key Bearer minted-access-token","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log","authorization":"Bearer minted-access-token","auth":{"token":"minted-access-token"}}}}'
     ;;
+  service_account_role_denied:*service-account-tokens)
+    write_response 403 '{"status":403,"title":"Forbidden","detail":"Service account does not have permission to mint access tokens for this team.","requiredRole":"Team Admin","type":"https://api.postman.com/problems/forbidden"}'
+    ;;
   no_token:*service-account-tokens)
     write_response 200 '{"token_type":"bearer"}'
     ;;
@@ -195,6 +198,12 @@ case "$MOCK_SCENARIO:$url" in
     ;;
   me_unauthorized:*/me)
     write_response 403 '{"error":{"name":"forbiddenError","message":"Team lookup forbidden for Bearer minted-access-token"},"authorization":"Bearer minted-access-token"}'
+    ;;
+  workspace_role_missing:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  workspace_role_missing:*/me)
+    write_response 403 '{"error":{"name":"forbiddenError","message":"Service account is not assigned to this workspace or lacks required workspace role."},"requiredWorkspaceRole":"Admin"}'
     ;;
   me_network_error:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token"}'
@@ -362,17 +371,35 @@ run_write_github_secrets() {
   local gh_log="$case_dir/gh.log"
   mkdir -p "$bin_dir"
 
-  if [ "$install_gh" = "yes" ]; then
-    cat > "$bin_dir/gh" <<'GH'
+  case "$install_gh" in
+    yes)
+      cat > "$bin_dir/gh" <<'GH'
 #!/bin/bash
 set -euo pipefail
 payload="$(cat)"
 printf 'gh %s payload_length=%s\n' "$*" "${#payload}" >> "$MOCK_GH_LOG"
 GH
-    chmod +x "$bin_dir/gh"
-  fi
+      chmod +x "$bin_dir/gh"
+      ;;
+    fail-permission)
+      cat > "$bin_dir/gh" <<'GH'
+#!/bin/bash
+set -euo pipefail
+cat >/dev/null
+echo "HTTP 403: Resource not accessible by integration" >&2
+exit 1
+GH
+      chmod +x "$bin_dir/gh"
+      ;;
+    no)
+      ;;
+    *)
+      echo "Unknown gh install mode: $install_gh" >&2
+      return 1
+      ;;
+  esac
   local run_path="$bin_dir"
-  if [ "$install_gh" = "yes" ]; then
+  if [ "$install_gh" != "no" ]; then
     run_path="$bin_dir:/bin:/usr/bin"
   fi
 
@@ -484,6 +511,15 @@ test_token_endpoint_malformed_json() {
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
 }
 
+test_service_account_role_denied_on_token_mint() {
+  local case_dir
+  case_dir="$(run_resolve "service_account_role_denied_on_token_mint" "service_account_role_denied" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 403)" &&
+    assert_contains "$case_dir/run.log" "Service account does not have permission to mint access tokens for this team." &&
+    assert_contains "$case_dir/run.log" "Team Admin" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
+}
+
 test_bearer_only_team_id_fallback() {
   local case_dir
   case_dir="$(run_resolve "bearer_only_team_id_fallback" "bearer_only" "" "$TEST_EXISTING_TOKEN" "" "success")"
@@ -508,6 +544,15 @@ test_me_lookup_forbidden_with_service_account() {
     assert_contains "$case_dir/run.log" "forbiddenError" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
+}
+
+test_workspace_role_missing_for_team_lookup() {
+  local case_dir
+  case_dir="$(run_resolve "workspace_role_missing_for_team_lookup" "workspace_role_missing" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::/me failed (HTTP 403) while resolving team ID." &&
+    assert_contains "$case_dir/run.log" "Service account is not assigned to this workspace or lacks required workspace role." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
 }
 
 test_me_lookup_network_error() {
@@ -607,6 +652,14 @@ test_secret_refresh_missing_gh_cli() {
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
 }
 
+test_secret_refresh_github_token_lacks_secrets_write_permission() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_github_token_lacks_permission" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "fail-permission" "failure")"
+  assert_contains "$case_dir/run.log" "HTTP 403: Resource not accessible by integration" &&
+    assert_contains "$case_dir/run.log" "::error::Failed to write GitHub secret POSTMAN_ACCESS_TOKEN. Ensure github-token has repo Actions secrets write permission for postman-cs/example." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
 for test_name in \
   test_missing_required_auth_inputs \
   test_invalid_stack_input \
@@ -618,9 +671,11 @@ for test_name in \
   test_access_token_with_api_key_team_lookup \
   test_token_endpoint_success_without_token \
   test_token_endpoint_malformed_json \
+  test_service_account_role_denied_on_token_mint \
   test_bearer_only_team_id_fallback \
   test_bearer_only_team_id_fallback_failure_message \
   test_me_lookup_forbidden_with_service_account \
+  test_workspace_role_missing_for_team_lookup \
   test_me_lookup_network_error \
   test_me_lookup_malformed_json \
   test_invalid_or_inactive_api_key_response \
@@ -632,7 +687,8 @@ for test_name in \
   test_secret_refresh_missing_github_token \
   test_secret_refresh_missing_repo \
   test_secret_refresh_missing_resolved_values \
-  test_secret_refresh_missing_gh_cli
+  test_secret_refresh_missing_gh_cli \
+  test_secret_refresh_github_token_lacks_secrets_write_permission
 do
   if "$test_name"; then
     pass "$test_name"

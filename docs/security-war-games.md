@@ -134,9 +134,11 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Normal/customer PMAK sent to service-token endpoint | Fails with the Postman HTTP status and redacted response. |
 | Token endpoint returns success without a token | Fails with `Mint succeeded but no access token in response`. |
 | Token endpoint returns malformed JSON | Fails with `Mint succeeded but token response was not valid JSON`. |
+| Service account lacks role/scope to mint tokens | Fails with Postman HTTP `403` and redacted response details. |
 | Provided `postman-team-id` | Skips `/me` lookup and returns the provided Team ID. |
 | Bearer-only `/me` rejects provided token | Fails with guidance to provide `postman-team-id` or `postman-api-key`. |
 | `/me` rejects service-account Team ID lookup | Fails with the HTTP status and redacted error summary. |
+| Service account lacks workspace assignment/role | Fails with the Postman HTTP status and redacted role error summary. |
 | `/me` network timeout/error | Fails with `Network error calling /me`. |
 | `/me` returns malformed JSON | Fails with `/me succeeded but response was not valid JSON`. |
 | `/me` returns JSON without Team ID | Fails with guidance to provide `postman-team-id` and omits account metadata. |
@@ -144,6 +146,7 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Secret refresh missing repo context | Fails before `gh secret set`. |
 | Secret refresh missing resolved token or Team ID | Fails before `gh secret set`. |
 | Runner without `gh` CLI | Fails with a clear runner setup message. |
+| GitHub token lacks repo secret write permission | Fails with a clear `Failed to write GitHub secret ...` message. |
 
 ## GitHub Actions Template Integration Coverage
 
@@ -155,6 +158,17 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 - service-account PMAK resolution feeds the downstream action as access-token auth;
 - provided access-token plus Team ID skips minting and still feeds downstream;
 - legacy PMAK-only downstream auth still works without invoking the resolver.
+- downstream workspace-role checks surface a clear error when a service account is unassigned or lacks the required role;
+- downstream workspace-role checks pass when the service account has the required role.
+
+## Permission And Role Notes
+
+The resolver can validate auth resolution and report Postman/GitHub permission failures, but downstream CSE automations still need their own workspace/resource permission checks. For customer setup, the service account should have:
+
+- permission to mint short-lived tokens for the team;
+- access to the target Postman team;
+- the required role on each target workspace/API resource used by the downstream automation;
+- a separate GitHub PAT or App token with repo Actions secret write permission if `write-github-secret` is enabled.
 
 ## Full Pipeline War Game
 
