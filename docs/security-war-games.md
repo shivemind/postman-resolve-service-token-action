@@ -49,8 +49,9 @@ Initial Jade Global auth-only runs:
 | `26605685160` | failure | Existing `POSTMAN_API_KEY` returned `401` for old API-key `/me`; harness was updated to continue after baseline failure. |
 | `26605714995` | failure | Service-account token exchange returned `401`; invalid-key and missing-input negative tests behaved as expected. |
 | `26605752107` | failure | Existing `POSTMAN_ACCESS_TOKEN` also failed `/me` with `401`; service-account exchange still returned `401`. |
+| `26605880602` | mixed | Fresh non-service PMAK succeeded for old API-key `/me` and failed `/service-account-tokens` as expected. Fresh supplied access token failed Bearer `/me` with `401`. |
 
-Interpretation: the Jade Global repo secrets currently do not contain a valid active service-account API key or valid access token. Full downstream smoke and full-pipeline war games are blocked until `POSTMAN_API_KEY` is rotated to an active service-account key.
+Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Jade Global repo still does not contain a valid active service-account API key for `POSTMAN_API_KEY`. The fresh supplied token did not work as a Bearer token for `/me`, so it is not currently suitable for this action's access-token-provided Team ID fallback. Full downstream smoke and full-pipeline service-account war games are blocked until `POSTMAN_API_KEY` is rotated to an active service-account key.
 
 ## Full Pipeline War Game
 
