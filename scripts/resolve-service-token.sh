@@ -153,6 +153,17 @@ else
   fi
 
   TEAM_ID="$(printf '%s' "$ME_BODY" | jq -r '
+    def team_value:
+      if type == "string" then
+        .
+      elif type == "number" then
+        tostring
+      elif type == "object" then
+        (.id? // .teamId? // empty | tostring)
+      else
+        empty
+      end;
+
     [
       .user.teamId?,
       .user.team.id?,
@@ -167,7 +178,8 @@ else
       .identity.team?,
       .session.identity.team?
     ]
-    | map(select(type == "string" and length > 0))
+    | map(team_value)
+    | map(select(. != "" and . != "null"))
     | .[0] // empty
   ')"
   if [ -z "$TEAM_ID" ] || [ "$TEAM_ID" = "null" ]; then

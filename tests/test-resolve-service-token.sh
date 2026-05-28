@@ -127,6 +127,12 @@ case "$MOCK_SCENARIO:$url" in
   token_passthrough:*/me)
     write_response 200 '{"user":{"teamId":"team-existing"}}'
     ;;
+  numeric_team_id:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  numeric_team_id:*/me)
+    write_response 200 '{"user":{"teamId":13569807}}'
+    ;;
   bearer_only:*/me)
     if has_header "x-api-key: PMAK-test-api-key"; then
       write_response 400 '{"error":{"message":"x-api-key should not be sent"}}'
@@ -215,6 +221,13 @@ test_service_account_api_key_to_access_token() {
     assert_contains "$case_dir/github_output" "team-id=team-minted"
 }
 
+test_numeric_team_id_resolution() {
+  local case_dir
+  case_dir="$(run_resolve "numeric_team_id_resolution" "numeric_team_id" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "token=$TEST_MINTED_TOKEN" &&
+    assert_contains "$case_dir/github_output" "team-id=13569807"
+}
+
 test_access_token_already_provided() {
   local case_dir
   case_dir="$(run_resolve "access_token_already_provided" "token_passthrough" "$TEST_API_KEY" "$TEST_EXISTING_TOKEN" "" "success")"
@@ -290,6 +303,7 @@ GH
 for test_name in \
   test_pmak_only_legacy_path \
   test_service_account_api_key_to_access_token \
+  test_numeric_team_id_resolution \
   test_access_token_already_provided \
   test_bearer_only_team_id_fallback \
   test_invalid_or_inactive_api_key_response \
