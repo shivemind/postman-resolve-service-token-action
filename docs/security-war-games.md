@@ -54,8 +54,9 @@ Initial Jade Global auth-only runs:
 | `26606131433` | mixed | Backward compatibility existing PMAK test passed; secret-refresh canary passed; Bearer-only Team ID fallback failed because supplied Bearer token returned `/me` HTTP `401`. |
 | `26606256142` | mixed | Winter Trinity service-account PMAK minted a token and resolved numeric Team ID after parser fix. Secret refresh passed. Bearer-only replay of the minted token still failed `/me` with HTTP `401`. |
 | `26606300164` | mixed | Direct probes confirmed the minted service-account token returned HTTP `401` for `/me` with both `Authorization: Bearer` and `x-access-token`. Backward compatibility and secret refresh still passed. |
+| `26606482912` | mixed | Added hybrid lookup canary. Minted service-account token plus non-service PMAK resolved Team ID successfully while skipping the second mint. Bearer-only replay still failed with HTTP `401`. |
 
-Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Winter Trinity service-account PMAK validates successful token minting and same-step Team ID resolution. Fresh supplied tokens and minted service-account tokens did not work as Bearer-only credentials for `/me`, so callers should provide `postman-team-id` or provide a PMAK alongside `postman-access-token` for Team ID lookup.
+Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Winter Trinity service-account PMAK validates successful token minting and same-step Team ID resolution. Fresh supplied tokens and minted service-account tokens did not work as Bearer-only credentials for `/me`, but a PMAK supplied alongside `postman-access-token` did resolve Team ID successfully. Customers can therefore use one of three working paths: same-step service-account mint, explicit `postman-team-id`, or provided token plus PMAK Team ID lookup.
 
 ## Controlled Scale Findings
 
@@ -103,6 +104,7 @@ Validated:
 - generated token is masked;
 - numeric Team ID is parsed and exposed as `team-id`;
 - repo secret refresh canary writes, verifies, and cleans up the configured secret names;
+- provided access token plus non-service PMAK resolves Team ID while skipping token mint;
 - non-service PMAK old flow remains valid.
 
 Not validated as passing:
