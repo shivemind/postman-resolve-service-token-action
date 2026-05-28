@@ -192,6 +192,7 @@ The action fails with explicit GitHub Actions errors when:
 - a network error prevents the token or `/me` call;
 - the token endpoint succeeds but does not return an access token;
 - `/me` succeeds but no team ID can be read from the response;
+- `/me` returns multiple possible team IDs and no singular/current team field, in which case `postman-team-id` must be supplied;
 - Bearer-only `/me` rejects a provided access token and no `postman-team-id` was supplied;
 - Postman returns `403` because the service account lacks the required team/workspace role or permission;
 - GitHub secret refresh fails because `github-token` cannot write repo Actions secrets;

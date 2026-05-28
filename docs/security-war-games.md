@@ -131,6 +131,7 @@ The mocked suite validates token lifecycle behavior without live Postman calls:
 - provided access-token flows skip minting and leave expiry outputs empty;
 - repeated service-account resolution mints a fresh token each run instead of reusing a prior output;
 - expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
+- single-membership `/me` responses can resolve Team ID from the membership list, while multi-team responses without a singular/current team fail and require `postman-team-id`;
 - disabled or deleted service-account keys fail at token mint with the Postman HTTP status and redacted response details;
 - secret refresh continues to write the configured repo secret names with the resolved token and Team ID while keeping token values masked.
 
@@ -150,6 +151,7 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Service account lacks role/scope to mint tokens | Fails with Postman HTTP `403` and redacted response details. |
 | Provided `postman-team-id` | Skips `/me` lookup and returns the provided Team ID. |
 | Bearer-only `/me` rejects provided token | Fails with guidance to provide `postman-team-id` or `postman-api-key`. |
+| Multi-team `/me` response has no singular/current Team ID | Fails with guidance to provide `postman-team-id`; account metadata stays omitted from logs. |
 | `/me` rejects service-account Team ID lookup | Fails with the HTTP status and redacted error summary. |
 | Service account lacks workspace assignment/role | Fails with the Postman HTTP status and redacted role error summary. |
 | `/me` network timeout/error | Fails with `Network error calling /me`. |
@@ -213,6 +215,7 @@ scripts/compare-workflow-performance.sh \
 | Invalid, inactive, disabled, revoked, or deleted PMAK | Action fails with HTTP status and redacted response. |
 | Personal PMAK sent to service-account token endpoint | Action fails clearly; no token output. |
 | Expired access token provided | Action skips mint, then Team ID `/me` fails clearly. |
+| Multi-team or ambiguous Team ID lookup | Action fails clearly and requires explicit `postman-team-id` rather than guessing. |
 | Bearer-only Team ID fallback | If supported by the token type, `/me` succeeds without `x-api-key` and returns `team-id`; otherwise the action fails clearly and caller supplies `postman-team-id`. |
 | Token endpoint network failure | Action fails with network error, no token output. |
 | `/me` response without Team ID | Action fails with unable-to-resolve-Team-ID error. |

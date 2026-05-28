@@ -226,37 +226,77 @@ else
     exit 1
   fi
 
-  if ! TEAM_ID="$(printf '%s' "$ME_BODY" | jq -r '
+  if ! TEAM_SELECTION="$(printf '%s' "$ME_BODY" | jq -r '
     def team_value:
       if type == "string" then
         .
       elif type == "number" then
         tostring
       elif type == "object" then
-        (.id? // .teamId? // empty | tostring)
+        (.teamId? // .team_id? // .id? // empty | tostring)
       else
         empty
       end;
 
-    [
-      .user.teamId?,
-      .user.team.id?,
-      .teamId?,
-      .team.id?,
-      .identity.teamId?,
-      .identity.team.id?,
-      .session.identity.teamId?,
-      .session.identity.team.id?,
-      .user.team?,
-      .team?,
-      .identity.team?,
-      .session.identity.team?
-    ]
-    | map(team_value)
-    | map(select(. != "" and . != "null"))
-    | .[0] // empty
+    def clean_ids:
+      map(team_value)
+      | map(select(. != "" and . != "null"))
+      | unique;
+
+    def singleton_ids:
+      [
+        .user.teamId?,
+        .user.team.id?,
+        .teamId?,
+        .team.id?,
+        .identity.teamId?,
+        .identity.team.id?,
+        .session.identity.teamId?,
+        .session.identity.team.id?,
+        .user.team?,
+        .team?,
+        .identity.team?,
+        .session.identity.team?
+      ] | clean_ids;
+
+    def membership_ids:
+      [
+        .teams[]?,
+        .user.teams[]?,
+        .memberships[]?.teamId?,
+        .memberships[]?.team_id?,
+        .memberships[]?.team?,
+        .user.memberships[]?.teamId?,
+        .user.memberships[]?.team_id?,
+        .user.memberships[]?.team?,
+        .organizations[]?.teamId?,
+        .organizations[]?.team_id?,
+        .organizations[]?.team?
+      ] | clean_ids;
+
+    (singleton_ids) as $singleton |
+    (membership_ids) as $memberships |
+    (
+      if ($singleton | length) > 0 then
+        {team_id: $singleton[0], ambiguous: false}
+      elif ($memberships | length) == 1 then
+        {team_id: $memberships[0], ambiguous: false}
+      elif ($memberships | length) > 1 then
+        {team_id: "", ambiguous: true}
+      else
+        {team_id: "", ambiguous: false}
+      end
+    )
+    | "\(.team_id)|\(.ambiguous)"
   ' 2>/dev/null)"; then
     log_error "/me succeeded but response was not valid JSON"
+    summarize_me_response "$ME_BODY"
+    exit 1
+  fi
+  TEAM_ID="${TEAM_SELECTION%%|*}"
+  TEAM_ID_AMBIGUOUS="${TEAM_SELECTION##*|}"
+  if [ "$TEAM_ID_AMBIGUOUS" = "true" ]; then
+    log_error "Multiple team IDs were present in /me response. Provide postman-team-id to disambiguate Team ID."
     summarize_me_response "$ME_BODY"
     exit 1
   fi

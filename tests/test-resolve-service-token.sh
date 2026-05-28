@@ -190,6 +190,18 @@ case "$MOCK_SCENARIO:$url" in
   numeric_team_id:*/me)
     write_response 200 '{"user":{"teamId":13569807}}'
     ;;
+  single_membership_team_id:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  single_membership_team_id:*/me)
+    write_response 200 '{"user":{"memberships":[{"team":{"id":"team-single-membership","name":"Single Membership Team"}}]}}'
+    ;;
+  ambiguous_team_id:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  ambiguous_team_id:*/me)
+    write_response 200 '{"user":{"name":"Multi Team User","teams":[{"id":"team-alpha","name":"Alpha Team"},{"id":"team-beta","name":"Beta Team"}]},"memberships":[{"teamId":"team-alpha"},{"teamId":"team-beta"}]}'
+    ;;
   bearer_only:*/me)
     if has_header "x-api-key: PMAK-test-api-key"; then
       write_response 400 '{"error":{"message":"x-api-key should not be sent"}}'
@@ -527,6 +539,22 @@ test_numeric_team_id_resolution() {
     assert_contains "$case_dir/github_output" "team-id=13569807"
 }
 
+test_single_membership_team_id_resolution() {
+  local case_dir
+  case_dir="$(run_resolve "single_membership_team_id_resolution" "single_membership_team_id" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "team-id=team-single-membership"
+}
+
+test_ambiguous_multi_team_id_requires_explicit_team_id() {
+  local case_dir
+  case_dir="$(run_resolve "ambiguous_multi_team_id_requires_explicit_team_id" "ambiguous_team_id" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Multiple team IDs were present in /me response. Provide postman-team-id to disambiguate Team ID." &&
+    assert_contains "$case_dir/run.log" "[/me response omitted: response may include account metadata]" &&
+    assert_not_contains "$case_dir/run.log" "team-alpha" &&
+    assert_not_contains "$case_dir/run.log" "team-beta" &&
+    assert_not_contains "$case_dir/github_output" "team-id="
+}
+
 test_access_token_already_provided() {
   local case_dir
   case_dir="$(run_resolve "access_token_already_provided" "token_passthrough" "$TEST_API_KEY" "$TEST_EXISTING_TOKEN" "" "success")"
@@ -761,6 +789,8 @@ for test_name in \
   test_service_account_token_lifecycle_metadata_outputs \
   test_service_account_refresh_mints_new_token \
   test_numeric_team_id_resolution \
+  test_single_membership_team_id_resolution \
+  test_ambiguous_multi_team_id_requires_explicit_team_id \
   test_access_token_already_provided \
   test_expired_provided_access_token_fails_without_minting \
   test_provided_team_id_skips_lookup \
