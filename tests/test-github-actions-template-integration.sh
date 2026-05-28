@@ -147,6 +147,45 @@ run_resolver_like_template() {
   printf '%s\n' "$case_dir"
 }
 
+run_resolver_like_reusable_template() {
+  local name="$1"
+  local scenario="$2"
+  local api_key="$3"
+  local access_token="$4"
+  local team_id="$5"
+  local expected_status="$6"
+  local case_dir="$TMP_DIR/$name"
+  local bin_dir="$case_dir/bin"
+  mkdir -p "$bin_dir"
+  install_fake_curl "$bin_dir"
+  : > "$case_dir/outputs"
+
+  set +e
+  PATH="$bin_dir:$PATH" \
+  MOCK_SCENARIO="$scenario" \
+  POSTMAN_API_KEY="$api_key" \
+  EXISTING_TOKEN="$access_token" \
+  EXISTING_TEAM_ID="$team_id" \
+  STACK="prod" \
+  GITHUB_OUTPUT="$case_dir/outputs" \
+    bash "$ROOT_DIR/scripts/resolve-service-token.sh" > "$case_dir/resolve.log" 2>&1
+  local status=$?
+  set -e
+
+  if [ "$expected_status" = "success" ] && [ "$status" -ne 0 ]; then
+    echo "Expected success but got exit $status"
+    sed -n '1,180p' "$case_dir/resolve.log"
+    return 1
+  fi
+  if [ "$expected_status" = "failure" ] && [ "$status" -eq 0 ]; then
+    echo "Expected failure but got success"
+    sed -n '1,180p' "$case_dir/resolve.log"
+    return 1
+  fi
+
+  printf '%s\n' "$case_dir"
+}
+
 simulate_downstream_cse_template() {
   local case_dir="$1"
   local api_key="$2"
@@ -207,6 +246,59 @@ test_example_workflow_is_not_fork_pr_secret_entrypoint() {
     assert_not_contains "$example" "pull_request_target:" &&
     assert_not_contains "$example" "write-github-secret: 'true'" &&
     assert_not_contains "$example" "github-token:"
+}
+
+test_reusable_workflow_declares_customer_contract() {
+  local reusable="$ROOT_DIR/examples/reusable-cse-postman-auth-template.yml"
+  assert_contains "$reusable" "workflow_call:" &&
+    assert_contains "$reusable" "project-name:" &&
+    assert_contains "$reusable" "spec-path:" &&
+    assert_contains "$reusable" "POSTMAN_API_KEY:" &&
+    assert_contains "$reusable" "POSTMAN_ACCESS_TOKEN:" &&
+    assert_contains "$reusable" "POSTMAN_TEAM_ID:" &&
+    assert_contains "$reusable" "SECRETS_WRITE_PAT:" &&
+    assert_contains "$reusable" "auth-method:" &&
+    assert_contains "$reusable" "team-id:" &&
+    assert_contains "$reusable" "permissions:" &&
+    assert_contains "$reusable" "contents: read" &&
+    assert_not_contains "$reusable" "pull_request:" &&
+    assert_not_contains "$reusable" "pull_request_target:"
+}
+
+test_reusable_workflow_wires_resolver_outputs_to_downstream() {
+  local reusable="$ROOT_DIR/examples/reusable-cse-postman-auth-template.yml"
+  assert_contains "$reusable" "id: postman_auth" &&
+    assert_contains "$reusable" "uses: postman-cs/postman-resolve-service-token-action@v0" &&
+    assert_contains "$reusable" "write-github-secret: \${{ inputs.write-github-secret }}" &&
+    assert_contains "$reusable" "github-token: \${{ secrets.SECRETS_WRITE_PAT }}" &&
+    assert_contains "$reusable" "postman-api-key: \${{ secrets.POSTMAN_API_KEY }}" &&
+    assert_contains "$reusable" "postman-access-token: \${{ steps.postman_auth.outputs.access-token }}" &&
+    assert_contains "$reusable" "postman-team-id: \${{ steps.postman_auth.outputs.team-id }}"
+}
+
+test_reusable_template_service_account_contract_run() {
+  local case_dir
+  case_dir="$(run_resolver_like_reusable_template "reusable_service_account" "service_account" "$TEST_API_KEY" "" "" "success")"
+
+  local access_token
+  local team_id
+  access_token="$(get_output "$case_dir/outputs" "access-token")"
+  team_id="$(get_output "$case_dir/outputs" "team-id")"
+
+  simulate_downstream_cse_template "$case_dir" "$TEST_API_KEY" "$access_token" "$team_id"
+
+  test "$access_token" = "$TEST_ACCESS_TOKEN" &&
+    test "$team_id" = "$TEST_TEAM_ID" &&
+    assert_contains "$case_dir/downstream.log" "auth_method=access-token" &&
+    assert_contains "$case_dir/downstream.log" "team_id_present=true" &&
+    assert_secret_only_masked_in_log "$case_dir/resolve.log" "$TEST_ACCESS_TOKEN"
+}
+
+test_reusable_template_missing_auth_secrets_fails_before_downstream() {
+  local case_dir
+  case_dir="$(run_resolver_like_reusable_template "reusable_missing_auth" "service_account" "" "" "" "failure")"
+  assert_contains "$case_dir/resolve.log" "::error::postman-api-key is required when postman-access-token is not provided." &&
+    assert_not_contains "$case_dir/outputs" "access-token="
 }
 
 test_ci_pull_request_workflow_does_not_reference_customer_secrets() {
@@ -314,6 +406,10 @@ test_downstream_template_accepts_required_workspace_role() {
 for test_name in \
   test_example_workflow_wires_resolver_outputs_to_downstream \
   test_example_workflow_is_not_fork_pr_secret_entrypoint \
+  test_reusable_workflow_declares_customer_contract \
+  test_reusable_workflow_wires_resolver_outputs_to_downstream \
+  test_reusable_template_service_account_contract_run \
+  test_reusable_template_missing_auth_secrets_fails_before_downstream \
   test_ci_pull_request_workflow_does_not_reference_customer_secrets \
   test_service_account_resolution_feeds_downstream_template \
   test_provided_access_token_template_skips_mint_and_feeds_downstream \

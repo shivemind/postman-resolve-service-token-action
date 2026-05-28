@@ -1,0 +1,74 @@
+name: Reusable CSE Postman Automation
+
+on:
+  workflow_call:
+    inputs:
+      project-name:
+        description: Project or service name to pass to the downstream CSE automation.
+        required: true
+        type: string
+      spec-path:
+        description: Path to the API specification in the caller repository.
+        required: true
+        type: string
+      postman-stack:
+        description: Postman stack profile for auth resolution.
+        required: false
+        type: string
+        default: prod
+      write-github-secret:
+        description: Refresh POSTMAN_ACCESS_TOKEN and POSTMAN_TEAM_ID repo secrets for later runs.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      POSTMAN_API_KEY:
+        description: Existing customer PMAK or service-account PMAK.
+        required: false
+      POSTMAN_ACCESS_TOKEN:
+        description: Existing short-lived Postman access token, when managed outside this template.
+        required: false
+      POSTMAN_TEAM_ID:
+        description: Explicit Postman Team ID. Recommended when POSTMAN_ACCESS_TOKEN is provided.
+        required: false
+      SECRETS_WRITE_PAT:
+        description: PAT or GitHub App token with repo Actions secrets write permission.
+        required: false
+    outputs:
+      auth-method:
+        description: Auth path selected by the resolver.
+        value: ${{ jobs.cse.outputs.auth-method }}
+      team-id:
+        description: Resolved Postman Team ID.
+        value: ${{ jobs.cse.outputs.team-id }}
+
+permissions:
+  contents: read
+
+jobs:
+  cse:
+    runs-on: ubuntu-latest
+    outputs:
+      auth-method: ${{ steps.postman_auth.outputs.auth-method }}
+      team-id: ${{ steps.postman_auth.outputs.team-id }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: postman_auth
+        uses: postman-cs/postman-resolve-service-token-action@v0
+        with:
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+          postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
+          postman-stack: ${{ inputs.postman-stack }}
+          write-github-secret: ${{ inputs.write-github-secret }}
+          github-token: ${{ secrets.SECRETS_WRITE_PAT }}
+
+      - name: Run downstream CSE automation
+        uses: postman-cs/postman-api-onboarding-action@v0
+        with:
+          project-name: ${{ inputs.project-name }}
+          spec-path: ${{ inputs.spec-path }}
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_auth.outputs.access-token }}
+          postman-team-id: ${{ steps.postman_auth.outputs.team-id }}

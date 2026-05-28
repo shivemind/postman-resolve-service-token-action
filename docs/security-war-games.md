@@ -111,6 +111,29 @@ Not validated as passing:
 
 - Bearer-only Team ID fallback. The minted token failed `/me` when replayed without an API key. Direct probes with `Authorization: Bearer` and `x-access-token` both returned HTTP `401`.
 
+## Source-Informed War-Game Findings
+
+The newer `postman-app-develop 2` source confirms service-account lifecycle events that customer pipelines must survive:
+
+- service-account CRUD uses UMS endpoints under `/v1/teams/{teamId}/service-accounts`;
+- service-account API key CRUD uses identity endpoints under `/api/keys/service-account`;
+- service-account key generation uses `type: service-account-key`;
+- key settings include `apikey.inactivity_expiry`, which can expire keys after inactivity or be team-managed;
+- key rotation can optionally delete the old key with `/api/keys/service-account/rotate?delete=true`;
+- service-account status uses values such as `active` and `disabled`, while API key status uses an `enabled` boolean;
+- workspace assignment and workspace role state are separate from service-account and key state.
+
+Risk vectors found from the source scan:
+
+| Source-observed behavior | Pipeline risk | War-game coverage |
+| --- | --- | --- |
+| Inactivity expiry can invalidate a PMAK even when the service account still exists. | Scheduled jobs fail with `401` after quiet periods. | Added mocked inactivity-expired key response with redaction checks. |
+| Rotation can delete the old key or leave old and new keys active. | Secret refresh order matters; stale repo secrets can fail after cleanup or leave extra valid credentials. | Added mocked rotated-old-key response and documented rotation order. |
+| Service account status and API key status are separate state machines. | A visible active service account can still have a disabled/deleted/expired key. | Disabled service account, deleted key, inactive key, and expired key are separate failure tests. |
+| Workspace assignments and roles are updated outside token minting. | Token mint can succeed while downstream workspace automation still gets forbidden. | Template tests include downstream workspace-role pass/fail checks. |
+| Several UI toggle flows rely on request rejection rather than explicit status checks. | A UI may briefly show lifecycle state that is not yet reflected by production auth behavior. | Pipeline guidance requires live canaries after disable, enable, rotate, and delete. |
+| Service-account detail route currently parses numeric IDs. | Future non-numeric IDs could surprise UI flows, though the action must not assume numeric Team IDs. | Action tests cover numeric and string Team ID outputs. |
+
 ## Token Safety Findings
 
 The mocked unit harness now treats token safety as a required behavior:
@@ -134,6 +157,8 @@ The mocked suite validates token lifecycle behavior without live Postman calls:
 - expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
 - single-membership `/me` responses can resolve Team ID from the membership list, while multi-team responses without a singular/current team fail and require `postman-team-id`;
 - disabled or deleted service-account keys fail at token mint with the Postman HTTP status and redacted response details;
+- inactivity-expired service-account keys fail at token mint with the Postman HTTP status and redacted response details;
+- rotated old service-account keys fail at token mint with the Postman HTTP status and redacted response details;
 - secret refresh continues to write the configured repo secret names with the resolved token and Team ID while keeping token values masked;
 - secret-refresh timing tests preserve `token-expires-at` / `token-expires-in` outputs so schedulers can refresh before the current token expires.
 
@@ -148,6 +173,8 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Normal/customer PMAK sent to service-token endpoint | Fails with the Postman HTTP status and redacted response. |
 | Disabled service account or service-account key | Fails at token mint with Postman HTTP status and redacted response. |
 | Deleted or revoked service account API key | Fails at token mint with Postman HTTP status and redacted response. |
+| Inactivity-expired service-account API key | Fails at token mint with Postman HTTP status and redacted response. |
+| Rotated old service-account API key | Fails at token mint with Postman HTTP status and redacted response. |
 | Token endpoint returns success without a token | Fails with `Mint succeeded but no access token in response`. |
 | Token endpoint returns malformed JSON | Fails with `Mint succeeded but token response was not valid JSON`. |
 | Service account lacks role/scope to mint tokens | Fails with Postman HTTP `403` and redacted response details. |
@@ -178,6 +205,9 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 - service-account PMAK resolution feeds the downstream action as access-token auth;
 - provided access-token plus Team ID skips minting and still feeds downstream;
 - legacy PMAK-only downstream auth still works without invoking the resolver.
+- the reusable `workflow_call` template declares optional PMAK, access-token, Team ID, and secret-write-token inputs;
+- the reusable template wires resolver outputs into the downstream CSE action;
+- the reusable template fails before downstream execution when neither PMAK nor access token is available;
 - downstream workspace-role checks surface a clear error when a service account is unassigned or lacks the required role;
 - downstream workspace-role checks pass when the service account has the required role.
 
@@ -218,6 +248,8 @@ scripts/compare-workflow-performance.sh \
 | --- | --- |
 | Missing `postman-api-key` and missing `postman-access-token` | Action fails before network calls. |
 | Invalid, inactive, disabled, revoked, or deleted PMAK | Action fails with HTTP status and redacted response. |
+| Inactivity-expired PMAK | Action fails with HTTP status and redacted response. |
+| Rotated old PMAK after old-key deletion | Action fails with HTTP status and redacted response. |
 | Personal PMAK sent to service-account token endpoint | Action fails clearly; no token output. |
 | Expired access token provided | Action skips mint, then Team ID `/me` fails clearly. |
 | Multi-team or ambiguous Team ID lookup | Action fails clearly and requires explicit `postman-team-id` rather than guessing. |
@@ -230,6 +262,7 @@ scripts/compare-workflow-performance.sh \
 | Secret-refresh mode with scoped token | Writes only configured secret names. |
 | Fork PR / untrusted contribution | Do not expose Postman or secret-write credentials; run only mocked, read-only PR validation and avoid `pull_request_target` with checked-out PR code. |
 | Downstream action compatibility | Existing PMAK input still works; access-token input is additive. |
+| Reusable workflow/template contract | `workflow_call` keeps old PMAK, service-account PMAK, and provided-token paths explicit. |
 
 ## Service Account Improvements Suggested By Testing
 
@@ -239,4 +272,6 @@ scripts/compare-workflow-performance.sh \
 - Return Team ID in the token-exchange response when safe, reducing one network call.
 - Allow `/me` or a dedicated identity endpoint to accept short-lived service-account tokens without needing the original API key.
 - Provide stable error codes for inactive key, wrong key type, expired token, and missing permissions.
+- Provide stable lifecycle audit events for key generated, key disabled, key rotated, old key deleted, service account disabled, and service account deleted.
+- Provide an explicit "pipeline readiness" check for service-account workspace assignments and required roles.
 - Provide an official CI/CD service-account setup guide with GitHub Actions and ADO examples.

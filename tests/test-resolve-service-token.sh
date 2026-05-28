@@ -254,6 +254,12 @@ case "$MOCK_SCENARIO:$url" in
   deleted_service_account:*service-account-tokens)
     write_response 404 '{"status":404,"title":"Not Found","detail":"Service account or API key was deleted, revoked, or is no longer available.","apiKey":"PMAK-test-api-key","token":"minted-access-token","secret":"delete-lifecycle-secret"}'
     ;;
+  inactivity_expired_service_account_key:*service-account-tokens)
+    write_response 401 '{"status":401,"title":"Unauthorized","detail":"API key expired due to inactivity and cannot mint service-account tokens.","apiKey":"PMAK-test-api-key","enabled":false,"identifier":"PMAK-test-api-key","secret":"expired-key-secret"}'
+    ;;
+  rotated_old_service_account_key:*service-account-tokens)
+    write_response 401 '{"status":401,"title":"Unauthorized","detail":"API key was rotated and the old key is no longer valid.","apiKey":"PMAK-test-api-key","identifier":"PMAK-test-api-key","oldKey":"PMAK-test-api-key","token":"minted-access-token"}'
+    ;;
   service_account_role_denied:*service-account-tokens)
     write_response 403 '{"status":403,"title":"Forbidden","detail":"Service account does not have permission to mint access tokens for this team.","requiredRole":"Team Admin","type":"https://api.postman.com/problems/forbidden"}'
     ;;
@@ -787,6 +793,27 @@ test_deleted_service_account_key_response() {
     assert_contains "$case_dir/run.log" "[REDACTED]"
 }
 
+test_inactivity_expired_service_account_key_response() {
+  local case_dir
+  case_dir="$(run_resolve "inactivity_expired_service_account_key_response" "inactivity_expired_service_account_key" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 401)" &&
+    assert_contains "$case_dir/run.log" "expired due to inactivity" &&
+    assert_contains "$case_dir/run.log" '"enabled": false' &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_not_contains "$case_dir/run.log" "expired-key-secret" &&
+    assert_contains "$case_dir/run.log" "[REDACTED]"
+}
+
+test_rotated_old_service_account_key_response() {
+  local case_dir
+  case_dir="$(run_resolve "rotated_old_service_account_key_response" "rotated_old_service_account_key" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 401)" &&
+    assert_contains "$case_dir/run.log" "old key is no longer valid" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_contains "$case_dir/run.log" "[REDACTED]"
+}
+
 test_generated_token_masked_before_stdout_output() {
   local case_dir
   case_dir="$(run_resolve_with_stdout_outputs "generated_token_masked_before_stdout_output" "mint_success" "$TEST_API_KEY" "" "" "success")"
@@ -920,6 +947,8 @@ for test_name in \
   test_invalid_or_inactive_api_key_response \
   test_disabled_service_account_key_response \
   test_deleted_service_account_key_response \
+  test_inactivity_expired_service_account_key_response \
+  test_rotated_old_service_account_key_response \
   test_generated_token_masked_before_stdout_output \
   test_provided_token_masked_before_stdout_output \
   test_unable_to_resolve_team_id \

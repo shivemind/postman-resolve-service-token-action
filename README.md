@@ -86,6 +86,7 @@ You can also pass a PMAK alongside `postman-access-token` purely for Team ID loo
 ### GitHub Actions Template Integration
 
 A minimal downstream template integration is available at [`examples/github-actions-template-integration.yml`](examples/github-actions-template-integration.yml).
+A reusable `workflow_call` template contract is available at [`examples/reusable-cse-postman-auth-template.yml`](examples/reusable-cse-postman-auth-template.yml).
 
 The least disruptive migration path is:
 
@@ -93,6 +94,8 @@ The least disruptive migration path is:
 2. Add optional `POSTMAN_ACCESS_TOKEN` and `POSTMAN_TEAM_ID` support.
 3. Prefer the access token when present.
 4. Fall back to the existing API-key behavior when the access token is absent.
+
+For managed templates, prefer the reusable workflow shape: expose `POSTMAN_API_KEY`, `POSTMAN_ACCESS_TOKEN`, and `POSTMAN_TEAM_ID` as optional secrets; require either `POSTMAN_API_KEY` or `POSTMAN_ACCESS_TOKEN`; and keep `SECRETS_WRITE_PAT` separate from the Postman credential. That lets existing customers keep their PMAK-only flow while service-account customers get short-lived token minting.
 
 ### Scheduled Secret Refresh
 
@@ -249,11 +252,26 @@ For GitHub Actions templates, the expected lift is low to moderate:
 ## Risk Vectors
 
 - Customers may provide a personal PMAK instead of a service-account PMAK; the mint endpoint should fail clearly.
+- Service-account API keys may be disabled, deleted, rotated, or expired by inactivity/team-managed settings; customers need a documented rotation order and a scheduled refresh canary.
 - Secret-writing mode introduces a GitHub PAT or App-token management requirement.
 - Bearer-only `/me` team ID resolution depends on Postman's token type support. Validated short-lived service-account tokens currently need either `postman-team-id` or same-step resolution with the service-account PMAK.
 - Downstream templates must preserve PMAK fallback behavior until customer migrations are complete.
 - Service accounts must be assigned to the target team/workspaces with the roles required by each downstream CSE automation; token resolution alone does not grant workspace access.
 - Access-token TTL and refresh cadence need to be aligned with long-running or scheduled customer workflows.
+- Rotating with old-key deletion should happen only after the repo secret has been refreshed and a downstream canary has passed; rotating without old-key deletion can leave two valid PMAKs until cleanup.
+
+## Enterprise Readiness Gate
+
+This action should be handed to an Enterprise customer only with a managed template and runbook that cover:
+
+- old PMAK-only fallback;
+- service-account PMAK minting;
+- provided-token passthrough with explicit `POSTMAN_TEAM_ID`;
+- secret refresh using a scoped GitHub PAT or App token;
+- lifecycle drills for disable, delete, rotate, inactivity expiry, and workspace role removal;
+- a fork/PR policy that never exposes Postman or secret-write credentials to untrusted code.
+
+Without those pieces, the happy path works but real credential lifecycle events are still likely to become support escalations.
 
 ## Open-Alpha Release Strategy
 
