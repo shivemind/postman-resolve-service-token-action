@@ -84,6 +84,12 @@ assert_secret_masked_before_first_output() {
   fi
 }
 
+get_output() {
+  local file="$1"
+  local name="$2"
+  grep -E "^${name}=" "$file" | tail -n 1 | cut -d= -f2-
+}
+
 install_fake_curl() {
   local bin_dir="$1"
   cat > "$bin_dir/curl" <<'CURL'
@@ -746,6 +752,35 @@ test_write_github_secrets_masks_token_and_writes_expected_names() {
     assert_not_contains "$gh_log" "team-minted"
 }
 
+test_secret_refresh_preserves_token_timing_outputs() {
+  local resolve_dir
+  local refresh_dir
+  local token
+  local team_id
+  local expires_at
+  local expires_in
+
+  resolve_dir="$(run_resolve "secret_refresh_timing_resolve" "lifecycle_metadata" "$TEST_API_KEY" "" "" "success")"
+  token="$(get_output "$resolve_dir/github_output" "access-token")"
+  team_id="$(get_output "$resolve_dir/github_output" "team-id")"
+  expires_at="$(get_output "$resolve_dir/github_output" "token-expires-at")"
+  expires_in="$(get_output "$resolve_dir/github_output" "token-expires-in")"
+
+  refresh_dir="$(run_write_github_secrets "secret_refresh_timing_write" "github-token-test" "postman-cs/example" "$token" "$team_id" "yes" "success")"
+
+  test "$token" = "$TEST_MINTED_TOKEN" &&
+    test "$team_id" = "team-minted" &&
+    test "$expires_at" = "$TEST_EXPIRES_AT" &&
+    test "$expires_in" = "900" &&
+    assert_contains "$refresh_dir/run.log" "Wrote secrets: POSTMAN_ACCESS_TOKEN, POSTMAN_TEAM_ID" &&
+    assert_contains "$refresh_dir/gh.log" "gh secret set POSTMAN_ACCESS_TOKEN --repo postman-cs/example" &&
+    assert_contains "$refresh_dir/gh.log" "gh secret set POSTMAN_TEAM_ID --repo postman-cs/example" &&
+    assert_secret_only_masked_in_log "$resolve_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_secret_only_masked_in_log "$refresh_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_not_contains "$refresh_dir/gh.log" "$TEST_MINTED_TOKEN" &&
+    assert_not_contains "$refresh_dir/gh.log" "team-minted"
+}
+
 test_secret_refresh_missing_github_token() {
   local case_dir
   case_dir="$(run_write_github_secrets "secret_refresh_missing_github_token" "" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure")"
@@ -812,6 +847,7 @@ for test_name in \
   test_unable_to_resolve_team_id \
   test_network_error \
   test_write_github_secrets_masks_token_and_writes_expected_names \
+  test_secret_refresh_preserves_token_timing_outputs \
   test_secret_refresh_missing_github_token \
   test_secret_refresh_missing_repo \
   test_secret_refresh_missing_resolved_values \

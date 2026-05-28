@@ -119,6 +119,8 @@ jobs:
 
 `github-token` must be a PAT or GitHub App installation token with repo secret write permission. The default workflow `GITHUB_TOKEN` cannot write repo secrets.
 
+Use action outputs for downstream steps in the same workflow run. Refreshed repo secrets are intended for later workflow runs after the refresh completes. Schedule refresh with a buffer shorter than the token TTL reported by `token-expires-in` / `token-expires-at`.
+
 ### Azure DevOps Adaptation Notes
 
 This repository is a GitHub composite action, so Azure DevOps should not consume it directly. After the GitHub path is validated, port the same shell behavior into an ADO template step:

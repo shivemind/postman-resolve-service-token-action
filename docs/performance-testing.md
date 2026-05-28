@@ -12,6 +12,7 @@ Measure workflow runtime first. Browser DevTools can help inspect the GitHub Act
 - downstream action durations;
 - failure/retry rate for token minting and `/me`;
 - whether secret-refresh mode adds meaningful time.
+- token TTL returned by `token-expires-in` / `token-expires-at`, and whether the refresh schedule leaves enough buffer before expiry.
 
 ## Baseline: Old Workflow
 
@@ -109,6 +110,8 @@ jobs:
 ```
 
 This isolates the cost of minting and Team ID resolution from the much larger downstream onboarding work.
+
+For secret-refresh timing, use the action outputs in the refresh job summary and compare the scheduled cadence against `token-expires-in`. Downstream steps in the same workflow run should consume `steps.postman_auth.outputs.access-token`; repo secrets written by `write-github-secret` are intended for later workflow runs after the refresh completes.
 
 ## DevTools Performance Tab
 

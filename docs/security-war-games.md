@@ -133,7 +133,8 @@ The mocked suite validates token lifecycle behavior without live Postman calls:
 - expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
 - single-membership `/me` responses can resolve Team ID from the membership list, while multi-team responses without a singular/current team fail and require `postman-team-id`;
 - disabled or deleted service-account keys fail at token mint with the Postman HTTP status and redacted response details;
-- secret refresh continues to write the configured repo secret names with the resolved token and Team ID while keeping token values masked.
+- secret refresh continues to write the configured repo secret names with the resolved token and Team ID while keeping token values masked;
+- secret-refresh timing tests preserve `token-expires-at` / `token-expires-in` outputs so schedulers can refresh before the current token expires.
 
 ## Customer Failure-Mode Coverage
 
@@ -160,6 +161,7 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Secret refresh missing GitHub token | Fails before `gh secret set`. |
 | Secret refresh missing repo context | Fails before `gh secret set`. |
 | Secret refresh missing resolved token or Team ID | Fails before `gh secret set`. |
+| Secret refresh timing metadata | Writes the configured secrets while preserving token expiry outputs for refresh-cadence checks. |
 | Runner without `gh` CLI | Fails with a clear runner setup message. |
 | GitHub token lacks repo secret write permission | Fails with a clear `Failed to write GitHub secret ...` message. |
 
