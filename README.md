@@ -195,7 +195,7 @@ $(go env GOPATH)/bin/actionlint
 
 The test harness uses mocked HTTP calls. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
 
-For old-flow versus service-account workflow timing, see [`docs/performance-testing.md`](docs/performance-testing.md).
+For old-flow versus service-account workflow timing, see [`docs/performance-testing.md`](docs/performance-testing.md). For controlled pipeline war games and red-team scenarios, see [`docs/security-war-games.md`](docs/security-war-games.md).
 
 ## Migration Lift
 
