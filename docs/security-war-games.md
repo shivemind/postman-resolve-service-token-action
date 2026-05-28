@@ -131,6 +131,7 @@ The mocked suite validates token lifecycle behavior without live Postman calls:
 - provided access-token flows skip minting and leave expiry outputs empty;
 - repeated service-account resolution mints a fresh token each run instead of reusing a prior output;
 - expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
+- disabled or deleted service-account keys fail at token mint with the Postman HTTP status and redacted response details;
 - secret refresh continues to write the configured repo secret names with the resolved token and Team ID while keeping token values masked.
 
 ## Customer Failure-Mode Coverage
@@ -142,6 +143,8 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Missing `postman-api-key` and missing `postman-access-token` | Fails before network calls with a required-input message. |
 | Invalid `postman-stack` | Fails before network calls and lists supported stack values. |
 | Normal/customer PMAK sent to service-token endpoint | Fails with the Postman HTTP status and redacted response. |
+| Disabled service account or service-account key | Fails at token mint with Postman HTTP status and redacted response. |
+| Deleted or revoked service account API key | Fails at token mint with Postman HTTP status and redacted response. |
 | Token endpoint returns success without a token | Fails with `Mint succeeded but no access token in response`. |
 | Token endpoint returns malformed JSON | Fails with `Mint succeeded but token response was not valid JSON`. |
 | Service account lacks role/scope to mint tokens | Fails with Postman HTTP `403` and redacted response details. |
@@ -207,7 +210,7 @@ scripts/compare-workflow-performance.sh \
 | Vector | Expected Result |
 | --- | --- |
 | Missing `postman-api-key` and missing `postman-access-token` | Action fails before network calls. |
-| Invalid or inactive PMAK | Action fails with HTTP status and redacted response. |
+| Invalid, inactive, disabled, revoked, or deleted PMAK | Action fails with HTTP status and redacted response. |
 | Personal PMAK sent to service-account token endpoint | Action fails clearly; no token output. |
 | Expired access token provided | Action skips mint, then Team ID `/me` fails clearly. |
 | Bearer-only Team ID fallback | If supported by the token type, `/me` succeeds without `x-api-key` and returns `team-id`; otherwise the action fails clearly and caller supplies `postman-team-id`. |

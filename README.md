@@ -188,7 +188,7 @@ The action fails with explicit GitHub Actions errors when:
 - `postman-api-key` is missing and `postman-access-token` is not provided;
 - `postman-stack` is not `prod` or `beta`;
 - `github-token` is missing while `write-github-secret` is `'true'`;
-- the service-account token endpoint rejects the key, including invalid or inactive keys;
+- the service-account token endpoint rejects the key, including invalid, inactive, disabled, revoked, or deleted keys;
 - a network error prevents the token or `/me` call;
 - the token endpoint succeeds but does not return an access token;
 - `/me` succeeds but no team ID can be read from the response;

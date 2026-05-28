@@ -206,6 +206,12 @@ case "$MOCK_SCENARIO:$url" in
   invalid_key:*service-account-tokens)
     write_response 401 '{"error":{"message":"inactive key PMAK-test-api-key Bearer minted-access-token","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log","authorization":"Bearer minted-access-token","auth":{"token":"minted-access-token"}}}}'
     ;;
+  disabled_service_account:*service-account-tokens)
+    write_response 403 '{"status":403,"title":"Forbidden","detail":"Service account is disabled and cannot mint tokens for PMAK-test-api-key.","serviceAccount":{"id":"sa-disabled","status":"disabled"},"apiKey":"PMAK-test-api-key","authorization":"Bearer minted-access-token","supportSecret":"delete-lifecycle-secret"}'
+    ;;
+  deleted_service_account:*service-account-tokens)
+    write_response 404 '{"status":404,"title":"Not Found","detail":"Service account or API key was deleted, revoked, or is no longer available.","apiKey":"PMAK-test-api-key","token":"minted-access-token","secret":"delete-lifecycle-secret"}'
+    ;;
   service_account_role_denied:*service-account-tokens)
     write_response 403 '{"status":403,"title":"Forbidden","detail":"Service account does not have permission to mint access tokens for this team.","requiredRole":"Team Admin","type":"https://api.postman.com/problems/forbidden"}'
     ;;
@@ -647,6 +653,29 @@ test_invalid_or_inactive_api_key_response() {
     assert_contains "$case_dir/run.log" "[REDACTED]"
 }
 
+test_disabled_service_account_key_response() {
+  local case_dir
+  case_dir="$(run_resolve "disabled_service_account_key_response" "disabled_service_account" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 403)" &&
+    assert_contains "$case_dir/run.log" "Service account is disabled" &&
+    assert_contains "$case_dir/run.log" '"status": "disabled"' &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_not_contains "$case_dir/run.log" "delete-lifecycle-secret" &&
+    assert_contains "$case_dir/run.log" "[REDACTED]"
+}
+
+test_deleted_service_account_key_response() {
+  local case_dir
+  case_dir="$(run_resolve "deleted_service_account_key_response" "deleted_service_account" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 404)" &&
+    assert_contains "$case_dir/run.log" "Service account or API key was deleted" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_not_contains "$case_dir/run.log" "delete-lifecycle-secret" &&
+    assert_contains "$case_dir/run.log" "[REDACTED]"
+}
+
 test_generated_token_masked_before_stdout_output() {
   local case_dir
   case_dir="$(run_resolve_with_stdout_outputs "generated_token_masked_before_stdout_output" "mint_success" "$TEST_API_KEY" "" "" "success")"
@@ -746,6 +775,8 @@ for test_name in \
   test_me_lookup_network_error \
   test_me_lookup_malformed_json \
   test_invalid_or_inactive_api_key_response \
+  test_disabled_service_account_key_response \
+  test_deleted_service_account_key_response \
   test_generated_token_masked_before_stdout_output \
   test_provided_token_masked_before_stdout_output \
   test_unable_to_resolve_team_id \
