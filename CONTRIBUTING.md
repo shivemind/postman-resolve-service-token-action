@@ -7,13 +7,14 @@ Thank you for your interest in contributing. This guide covers the workflow and 
 1. Fork and clone the repository.
 2. Create a feature branch: `git checkout -b my-change`.
 
-This repository is a pure composite GitHub Action - no Node.js, TypeScript, or build step. Edits live in `action.yml` and the documentation files.
+This repository is a pure composite GitHub Action - no Node.js, TypeScript, or build step. Runtime logic lives in `scripts/`, tests live in `tests/`, and metadata lives in `action.yml`.
 
 ## Local Validation
 
 Before opening a PR, lint the action with [`actionlint`](https://github.com/rhysd/actionlint):
 
 ```bash
+tests/test-resolve-service-token.sh
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
 $(go env GOPATH)/bin/actionlint
 ```
@@ -22,6 +23,7 @@ $(go env GOPATH)/bin/actionlint
 
 ## Before Submitting a PR
 
+- [ ] `tests/test-resolve-service-token.sh` passes locally.
 - [ ] `actionlint` passes locally.
 - [ ] Changes are focused and address a single concern.
 - [ ] README inputs/outputs tables match `action.yml`.

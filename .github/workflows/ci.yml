@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Run mocked shell tests
+        run: tests/test-resolve-service-token.sh
       - uses: actions/setup-go@v6
         with:
           go-version: '1.24'

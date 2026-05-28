@@ -1,8 +1,8 @@
 name: postman-resolve-service-token-action
-description: Public open-alpha composite action that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
+description: Resolves Postman auth for CSE automations by passing through an access token or minting one from a service-account API key.
 inputs:
   postman-api-key:
-    description: Postman API key (PMAK) used to mint the service-account access token. Required when postman-access-token is not provided.
+    description: Postman API key (PMAK). Use a service-account API key to mint a short-lived access token. Required when postman-access-token is not provided.
     required: false
     default: ""
   postman-access-token:
@@ -35,14 +35,20 @@ inputs:
     default: ""
 outputs:
   token:
-    description: Resolved Postman access token. Either minted or passed through from the postman-access-token input.
+    description: Resolved Postman access token. Kept for backward compatibility; prefer access-token for new workflows.
     value: ${{ steps.resolve.outputs.token }}
+  access-token:
+    description: Resolved Postman access token. Either minted from postman-api-key or passed through from postman-access-token.
+    value: ${{ steps.resolve.outputs.access-token }}
   team-id:
     description: Resolved Postman team ID. Either looked up via /me or passed through from the postman-team-id input.
     value: ${{ steps.resolve.outputs.team-id }}
   skipped:
     description: "'true' when the mint step was skipped because postman-access-token was provided as input."
     value: ${{ steps.resolve.outputs.skipped }}
+  auth-method:
+    description: "Resolved auth path: provided-access-token or service-account-api-key."
+    value: ${{ steps.resolve.outputs.auth-method }}
 runs:
   using: composite
   steps:
@@ -81,94 +87,7 @@ runs:
         EXISTING_TOKEN: ${{ inputs.postman-access-token }}
         EXISTING_TEAM_ID: ${{ inputs.postman-team-id }}
         STACK: ${{ inputs.postman-stack }}
-      run: |
-        set -euo pipefail
-
-        if [ "$STACK" = "beta" ]; then
-          API_HOST="https://api.getpostman-beta.com"
-        else
-          API_HOST="https://api.getpostman.com"
-        fi
-
-        # ----- Mint or skip ------------------------------------------------
-        if [ -n "$EXISTING_TOKEN" ]; then
-          echo "skipped=true" >> "$GITHUB_OUTPUT"
-          echo "::add-mask::$EXISTING_TOKEN"
-          echo "token=$EXISTING_TOKEN" >> "$GITHUB_OUTPUT"
-          TOKEN="$EXISTING_TOKEN"
-          echo "Skipped mint - using provided postman-access-token."
-        else
-          echo "skipped=false" >> "$GITHUB_OUTPUT"
-          MINT_URL="$API_HOST/service-account-tokens"
-          MINT_BODY="$(jq -nc --arg k "$POSTMAN_API_KEY" '{apiKey:$k}')"
-          # x-api-key header is required on prod (api.getpostman.com); beta accepts
-          # either header or body-only auth. Sending both keeps the call working on
-          # either stack.
-          HTTP_CODE="$(
-            curl -sS -o mint_response.json -w "%{http_code}" -X POST "$MINT_URL" \
-              -H "Content-Type: application/json" \
-              -H "x-api-key: $POSTMAN_API_KEY" \
-              --data "$MINT_BODY"
-          )"
-          RESPONSE="$(cat mint_response.json)"
-          rm -f mint_response.json
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "::error::service-account-tokens failed (HTTP $HTTP_CODE)"
-            echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
-            exit 1
-          fi
-          TOKEN="$(echo "$RESPONSE" | jq -r '.access_token // .session.token // empty')"
-          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-            echo "::error::Mint succeeded but no access token in response"
-            echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
-            exit 1
-          fi
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-        fi
-
-        # ----- Resolve team ID --------------------------------------------
-        if [ -n "$EXISTING_TEAM_ID" ]; then
-          echo "team-id=$EXISTING_TEAM_ID" >> "$GITHUB_OUTPUT"
-          echo "Using provided postman-team-id."
-        else
-          ME_URL="$API_HOST/me"
-          if [ -n "$POSTMAN_API_KEY" ]; then
-            ME_CODE="$(
-              curl -sS -o me_response.json -w "%{http_code}" "$ME_URL" \
-                -H "Authorization: Bearer $TOKEN" \
-                -H "x-api-key: $POSTMAN_API_KEY"
-            )"
-          else
-            ME_CODE="$(
-              curl -sS -o me_response.json -w "%{http_code}" "$ME_URL" \
-                -H "Authorization: Bearer $TOKEN"
-            )"
-          fi
-          ME_BODY="$(cat me_response.json)"
-          rm -f me_response.json
-          if [ "$ME_CODE" -lt 200 ] || [ "$ME_CODE" -ge 300 ]; then
-            echo "::error::/me failed (HTTP $ME_CODE)"
-            echo "$ME_BODY" | jq . 2>/dev/null || echo "$ME_BODY"
-            exit 1
-          fi
-          TEAM_ID="$(echo "$ME_BODY" | jq -r '
-            .user.teamId
-            // .user.team
-            // .teamId
-            // .team.id
-            // .team
-            // .identity.team
-            // .session.identity.team
-            // empty
-          ')"
-          if [ -z "$TEAM_ID" ] || [ "$TEAM_ID" = "null" ]; then
-            echo "::error::Could not read team id from /me response"
-            echo "$ME_BODY" | jq . 2>/dev/null || echo "$ME_BODY"
-            exit 1
-          fi
-          echo "team-id=$TEAM_ID" >> "$GITHUB_OUTPUT"
-        fi
+      run: bash "$GITHUB_ACTION_PATH/scripts/resolve-service-token.sh"
 
     - id: write_secrets
       name: Write resolved values to repo secrets
@@ -181,12 +100,4 @@ runs:
         TEAM_ID: ${{ steps.resolve.outputs.team-id }}
         ACCESS_TOKEN_SECRET_NAME: ${{ inputs.access-token-secret-name }}
         TEAM_ID_SECRET_NAME: ${{ inputs.team-id-secret-name }}
-      run: |
-        set -euo pipefail
-        if ! command -v gh >/dev/null 2>&1; then
-          echo "::error::gh CLI not found on runner. Use a runner image that includes gh (the default GitHub-hosted runners do), or install it before invoking this action."
-          exit 1
-        fi
-        printf '%s' "$TOKEN"   | gh secret set "$ACCESS_TOKEN_SECRET_NAME" --repo "$REPO"
-        printf '%s' "$TEAM_ID" | gh secret set "$TEAM_ID_SECRET_NAME"     --repo "$REPO"
-        echo "Wrote secrets: $ACCESS_TOKEN_SECRET_NAME, $TEAM_ID_SECRET_NAME"
+      run: bash "$GITHUB_ACTION_PATH/scripts/write-github-secrets.sh"
