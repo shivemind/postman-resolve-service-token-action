@@ -194,6 +194,7 @@ When only `postman-api-key` is provided:
 - The action masks the Postman API key and any resolved access token.
 - Generated tokens are written to `$GITHUB_OUTPUT`, not printed as normal log messages.
 - Error responses are redacted before logging keys such as `token`, `access_token`, `apiKey`, `secret`, `authorization`, and similar auth fields.
+- Input and output values containing newline or carriage-return characters are rejected to prevent GitHub output or workflow-command injection.
 - `write-github-secret: 'true'` writes the resolved values with `gh secret set` and logs only the secret names.
 
 ## Failure Modes
@@ -206,6 +207,7 @@ The action fails with explicit GitHub Actions errors when:
 - the service-account token endpoint rejects the key, including invalid, inactive, disabled, revoked, or deleted keys;
 - a network error prevents the token or `/me` call;
 - the token endpoint succeeds but does not return an access token;
+- the token endpoint or `/me` returns a value that is unsafe to write to GitHub outputs;
 - `/me` succeeds but no team ID can be read from the response;
 - `/me` returns multiple possible team IDs and no singular/current team field, in which case `postman-team-id` must be supplied;
 - Bearer-only `/me` rejects a provided access token and no `postman-team-id` was supplied;

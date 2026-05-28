@@ -143,6 +143,8 @@ The mocked unit harness now treats token safety as a required behavior:
 - token endpoint error bodies redact auth-like keys such as `apiKey`, `access_token`, `secret`, `authorization`, and nested `auth` values;
 - known input/output secret values are redacted even when an API error echoes them inside ordinary message text;
 - PMAK-shaped, Bearer-shaped, and JWT-shaped strings are scrubbed from logged error strings;
+- input values and resolved output values containing newline or carriage-return characters are rejected before they can inject extra GitHub outputs or workflow commands;
+- repo secret names are validated before they are logged or passed to `gh secret set`;
 - `/me` success bodies that do not contain a Team ID are omitted because they may include account metadata;
 - `gh secret set` tests verify the token/team values are passed via stdin and not written to the mock command log.
 
@@ -257,6 +259,9 @@ scripts/compare-workflow-performance.sh \
 | Token endpoint network failure | Action fails with network error, no token output. |
 | `/me` response without Team ID | Action fails with unable-to-resolve-Team-ID error. |
 | Error response contains token-like fields | Logs redact auth-like keys. |
+| Token endpoint returns newline/control characters in token or expiry metadata | Action rejects the value before writing GitHub outputs. |
+| `/me` returns newline/control characters in Team ID | Action rejects the value before writing GitHub outputs. |
+| Secret refresh receives unsafe secret names | Action rejects the names before calling `gh secret set`. |
 | Generated token output | Token is masked with `::add-mask::`. |
 | Secret-refresh mode without GitHub token | Action fails before attempting writes. |
 | Secret-refresh mode with scoped token | Writes only configured secret names. |

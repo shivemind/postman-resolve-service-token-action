@@ -8,6 +8,50 @@ TEAM_ID="${TEAM_ID:-}"
 ACCESS_TOKEN_SECRET_NAME="${ACCESS_TOKEN_SECRET_NAME:-POSTMAN_ACCESS_TOKEN}"
 TEAM_ID_SECRET_NAME="${TEAM_ID_SECRET_NAME:-POSTMAN_TEAM_ID}"
 
+contains_line_break() {
+  local value="${1:-}"
+  case "$value" in
+    *$'\n'*|*$'\r'*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_no_line_breaks() {
+  local label="$1"
+  local value="${2:-}"
+  if contains_line_break "$value"; then
+    echo "::error::$label must not contain newline or carriage return characters."
+    exit 1
+  fi
+}
+
+validate_secret_name() {
+  local label="$1"
+  local value="$2"
+  validate_no_line_breaks "$label" "$value"
+  if ! [[ "$value" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    echo "::error::$label must contain only letters, numbers, and underscores, and must not start with a number."
+    exit 1
+  fi
+  case "$value" in
+    [Gg][Ii][Tt][Hh][Uu][Bb]_* )
+      echo "::error::$label must not start with GITHUB_."
+      exit 1
+      ;;
+  esac
+}
+
+validate_no_line_breaks "github-token" "$GH_TOKEN"
+validate_no_line_breaks "github.repository" "$REPO"
+validate_no_line_breaks "resolved token" "$TOKEN"
+validate_no_line_breaks "resolved team ID" "$TEAM_ID"
+validate_secret_name "access-token-secret-name" "$ACCESS_TOKEN_SECRET_NAME"
+validate_secret_name "team-id-secret-name" "$TEAM_ID_SECRET_NAME"
+
 if [ -n "$TOKEN" ]; then
   echo "::add-mask::$TOKEN"
 fi

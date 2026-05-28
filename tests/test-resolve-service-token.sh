@@ -260,6 +260,21 @@ case "$MOCK_SCENARIO:$url" in
   rotated_old_service_account_key:*service-account-tokens)
     write_response 401 '{"status":401,"title":"Unauthorized","detail":"API key was rotated and the old key is no longer valid.","apiKey":"PMAK-test-api-key","identifier":"PMAK-test-api-key","oldKey":"PMAK-test-api-key","token":"minted-access-token"}'
     ;;
+  malicious_token_output_injection:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token\nteam-id=attacker"}'
+    ;;
+  malicious_team_id_output_injection:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  malicious_team_id_output_injection:*/me)
+    write_response 200 '{"team":{"id":"team-safe\naccess-token=attacker"}}'
+    ;;
+  malicious_expiry_output_injection:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token","expires_at":"2026-05-28T23:59:00Z\nteam-id=attacker","expires_in":"900"}'
+    ;;
+  workflow_command_error_body:*service-account-tokens)
+    write_response 401 '{"status":401,"title":"Unauthorized","detail":"::warning::owned PMAK-test-api-key Bearer minted-access-token","secret":"do-not-log"}'
+    ;;
   service_account_role_denied:*service-account-tokens)
     write_response 403 '{"status":403,"title":"Forbidden","detail":"Service account does not have permission to mint access tokens for this team.","requiredRole":"Team Admin","type":"https://api.postman.com/problems/forbidden"}'
     ;;
@@ -327,6 +342,7 @@ run_resolve() {
 
   local output_file="$case_dir/github_output"
   local log_file="$case_dir/run.log"
+  : > "$output_file"
   set +e
   PATH="$bin_dir:$PATH" \
   MOCK_SCENARIO="$scenario" \
@@ -368,6 +384,7 @@ run_resolve_with_stack() {
 
   local output_file="$case_dir/github_output"
   local log_file="$case_dir/run.log"
+  : > "$output_file"
   set +e
   PATH="$bin_dir:$PATH" \
   MOCK_SCENARIO="$scenario" \
@@ -441,6 +458,8 @@ run_write_github_secrets() {
   local team_id="$5"
   local install_gh="${6:-yes}"
   local expected_status="$7"
+  local access_token_secret_name="${8:-POSTMAN_ACCESS_TOKEN}"
+  local team_id_secret_name="${9:-POSTMAN_TEAM_ID}"
   local case_dir="$TMP_DIR/$name"
   local bin_dir="$case_dir/bin"
   local log_file="$case_dir/run.log"
@@ -486,8 +505,8 @@ GH
   REPO="$repo" \
   TOKEN="$token" \
   TEAM_ID="$team_id" \
-  ACCESS_TOKEN_SECRET_NAME="POSTMAN_ACCESS_TOKEN" \
-  TEAM_ID_SECRET_NAME="POSTMAN_TEAM_ID" \
+  ACCESS_TOKEN_SECRET_NAME="$access_token_secret_name" \
+  TEAM_ID_SECRET_NAME="$team_id_secret_name" \
     /bin/bash "$ROOT_DIR/scripts/write-github-secrets.sh" > "$log_file" 2>&1
   local status=$?
   set -e
@@ -814,6 +833,50 @@ test_rotated_old_service_account_key_response() {
     assert_contains "$case_dir/run.log" "[REDACTED]"
 }
 
+test_input_line_break_injection_rejected_before_masking() {
+  local malicious_key
+  local case_dir
+  malicious_key=$'PMAK-test-api-key\n::warning::owned'
+  case_dir="$(run_resolve "input_line_break_injection_rejected" "mint_success" "$malicious_key" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::postman-api-key must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "::warning::owned" &&
+    assert_not_contains "$case_dir/github_output" "access-token="
+}
+
+test_malicious_token_output_injection_rejected() {
+  local case_dir
+  case_dir="$(run_resolve "malicious_token_output_injection_rejected" "malicious_token_output_injection" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::resolved access token must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "team-id=attacker" &&
+    assert_not_contains "$case_dir/github_output" "team-id=attacker"
+}
+
+test_malicious_team_id_output_injection_rejected() {
+  local case_dir
+  case_dir="$(run_resolve "malicious_team_id_output_injection_rejected" "malicious_team_id_output_injection" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Refusing to write unsafe output 'team-id': value contains newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "access-token=attacker" &&
+    assert_not_contains "$case_dir/github_output" "access-token=attacker"
+}
+
+test_malicious_expiry_output_injection_rejected() {
+  local case_dir
+  case_dir="$(run_resolve "malicious_expiry_output_injection_rejected" "malicious_expiry_output_injection" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Refusing to write unsafe output 'token-expires-at': value contains newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "team-id=attacker" &&
+    assert_not_contains "$case_dir/github_output" "team-id=attacker"
+}
+
+test_workflow_command_error_body_is_summarized_safely() {
+  local case_dir
+  case_dir="$(run_resolve "workflow_command_error_body_is_summarized_safely" "workflow_command_error_body" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 401)" &&
+    assert_not_contains "$case_dir/run.log" "::warning::owned PMAK-test-api-key" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_not_contains "$case_dir/run.log" "do-not-log" &&
+    assert_contains "$case_dir/run.log" "[REDACTED]"
+}
+
 test_generated_token_masked_before_stdout_output() {
   local case_dir
   case_dir="$(run_resolve_with_stdout_outputs "generated_token_masked_before_stdout_output" "mint_success" "$TEST_API_KEY" "" "" "success")"
@@ -905,6 +968,16 @@ test_secret_refresh_missing_resolved_values() {
   assert_contains "$case_dir/run.log" "::error::Resolved token and team ID are required to write repo secrets."
 }
 
+test_secret_refresh_rejects_unsafe_secret_names() {
+  local case_dir
+  local malicious_secret_name
+  malicious_secret_name=$'POSTMAN_ACCESS_TOKEN\n::warning::owned'
+  case_dir="$(run_write_github_secrets "secret_refresh_rejects_unsafe_secret_names" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure" "$malicious_secret_name" "POSTMAN_TEAM_ID")"
+  assert_contains "$case_dir/run.log" "::error::access-token-secret-name must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "::warning::owned" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
 test_secret_refresh_missing_gh_cli() {
   local case_dir
   case_dir="$(run_write_github_secrets "secret_refresh_missing_gh_cli" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "no" "failure")"
@@ -949,6 +1022,11 @@ for test_name in \
   test_deleted_service_account_key_response \
   test_inactivity_expired_service_account_key_response \
   test_rotated_old_service_account_key_response \
+  test_input_line_break_injection_rejected_before_masking \
+  test_malicious_token_output_injection_rejected \
+  test_malicious_team_id_output_injection_rejected \
+  test_malicious_expiry_output_injection_rejected \
+  test_workflow_command_error_body_is_summarized_safely \
   test_generated_token_masked_before_stdout_output \
   test_provided_token_masked_before_stdout_output \
   test_unable_to_resolve_team_id \
@@ -958,6 +1036,7 @@ for test_name in \
   test_secret_refresh_missing_github_token \
   test_secret_refresh_missing_repo \
   test_secret_refresh_missing_resolved_values \
+  test_secret_refresh_rejects_unsafe_secret_names \
   test_secret_refresh_missing_gh_cli \
   test_secret_refresh_github_token_lacks_secrets_write_permission
 do

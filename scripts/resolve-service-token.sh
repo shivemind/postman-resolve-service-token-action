@@ -14,9 +14,34 @@ mask_if_set() {
   fi
 }
 
+contains_line_break() {
+  local value="${1:-}"
+  case "$value" in
+    *$'\n'*|*$'\r'*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_no_line_breaks() {
+  local label="$1"
+  local value="${2:-}"
+  if contains_line_break "$value"; then
+    log_error "$label must not contain newline or carriage return characters."
+    exit 1
+  fi
+}
+
 write_output() {
   local name="$1"
   local value="$2"
+  if contains_line_break "$value"; then
+    log_error "Refusing to write unsafe output '$name': value contains newline or carriage return characters."
+    exit 1
+  fi
   printf '%s=%s\n' "$name" "$value" >> "$GITHUB_OUTPUT"
 }
 
@@ -132,6 +157,10 @@ case "$STACK" in
     ;;
 esac
 
+validate_no_line_breaks "postman-api-key" "$POSTMAN_API_KEY"
+validate_no_line_breaks "postman-access-token" "$EXISTING_TOKEN"
+validate_no_line_breaks "postman-team-id" "$EXISTING_TEAM_ID"
+
 mask_if_set "$POSTMAN_API_KEY"
 mask_if_set "$EXISTING_TOKEN"
 
@@ -182,6 +211,7 @@ else
     sanitize_response "$RESPONSE"
     exit 1
   fi
+  validate_no_line_breaks "resolved access token" "$TOKEN"
   mask_if_set "$TOKEN"
   write_output "token" "$TOKEN"
   write_output "access-token" "$TOKEN"
