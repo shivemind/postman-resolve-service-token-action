@@ -49,6 +49,14 @@ log_error() {
   echo "::error::$*"
 }
 
+require_command() {
+  local name="$1"
+  if ! command -v "$name" >/dev/null 2>&1; then
+    log_error "Required command '$name' not found on runner."
+    exit 1
+  fi
+}
+
 redact_known_values() {
   local text="$1"
   local value
@@ -144,6 +152,8 @@ call_curl() {
   printf '%s' "$http_code"
 }
 
+validate_no_line_breaks "postman-stack" "$STACK"
+
 case "$STACK" in
   prod)
     API_HOST="https://api.getpostman.com"
@@ -160,6 +170,11 @@ esac
 validate_no_line_breaks "postman-api-key" "$POSTMAN_API_KEY"
 validate_no_line_breaks "postman-access-token" "$EXISTING_TOKEN"
 validate_no_line_breaks "postman-team-id" "$EXISTING_TEAM_ID"
+
+if [ -z "$EXISTING_TOKEN" ] || [ -z "$EXISTING_TEAM_ID" ]; then
+  require_command "curl"
+  require_command "jq"
+fi
 
 mask_if_set "$POSTMAN_API_KEY"
 mask_if_set "$EXISTING_TOKEN"

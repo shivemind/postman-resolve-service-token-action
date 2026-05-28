@@ -160,6 +160,33 @@ case "$MOCK_SCENARIO:$url" in
   lifecycle_metadata:*/me)
     write_response 200 '{"team":{"id":"team-minted"}}'
     ;;
+  camel_case_token_response:*service-account-tokens)
+    write_response 200 '{"accessToken":"camel-case-token","expiresIn":1200,"expiresAt":"2026-05-29T01:00:00Z"}'
+    ;;
+  camel_case_token_response:*/me)
+    write_response 200 '{"identity":{"teamId":"team-camel"}}'
+    ;;
+  session_token_response:*service-account-tokens)
+    write_response 200 '{"session":{"token":"session-token"},"expires":600,"expiration":"2026-05-29T01:10:00Z"}'
+    ;;
+  session_token_response:*/me)
+    write_response 200 '{"teamId":"team-session"}'
+    ;;
+  http_201_token_response:*service-account-tokens)
+    write_response 201 '{"token":"created-token","expires_in":450}'
+    ;;
+  http_201_token_response:*/me)
+    write_response 200 '{"session":{"identity":{"team":{"id":"team-created"}}}}'
+    ;;
+  http_204_empty_response:*service-account-tokens)
+    write_response 204 ''
+    ;;
+  rate_limited:*service-account-tokens)
+    write_response 429 '{"status":429,"title":"Too Many Requests","detail":"Rate limit exceeded for PMAK-test-api-key","retryAfter":60,"authorization":"Bearer minted-access-token"}'
+    ;;
+  server_error_html:*service-account-tokens)
+    write_response 500 '<html><body>oops PMAK-test-api-key Bearer minted-access-token</body></html>'
+    ;;
   lifecycle_refresh_first:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token-first","expires_in":300,"expires_at":"2026-05-28T23:00:00Z"}'
     ;;
@@ -220,11 +247,35 @@ case "$MOCK_SCENARIO:$url" in
   numeric_team_id:*/me)
     write_response 200 '{"user":{"teamId":13569807}}'
     ;;
+  root_team_id:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  root_team_id:*/me)
+    write_response 200 '{"teamId":"team-root"}'
+    ;;
+  session_identity_team_id:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  session_identity_team_id:*/me)
+    write_response 200 '{"session":{"identity":{"team":{"id":"team-session-identity"}}}}'
+    ;;
   single_membership_team_id:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token"}'
     ;;
   single_membership_team_id:*/me)
     write_response 200 '{"user":{"memberships":[{"team":{"id":"team-single-membership","name":"Single Membership Team"}}]}}'
+    ;;
+  duplicate_memberships_team_id:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  duplicate_memberships_team_id:*/me)
+    write_response 200 '{"memberships":[{"teamId":"team-duplicate"},{"team":{"id":"team-duplicate"}},{"team_id":"team-duplicate"}]}'
+    ;;
+  singleton_wins_over_membership_noise:*service-account-tokens)
+    write_response 200 '{"access_token":"minted-access-token"}'
+    ;;
+  singleton_wins_over_membership_noise:*/me)
+    write_response 200 '{"user":{"teamId":"team-current","teams":[{"id":"team-alpha"},{"id":"team-beta"}]},"memberships":[{"teamId":"team-alpha"},{"teamId":"team-beta"}]}'
     ;;
   ambiguous_team_id:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token"}'
@@ -319,6 +370,12 @@ case "$MOCK_SCENARIO:$url" in
     echo "curl: (6) Could not resolve host" >&2
     exit 6
     ;;
+  beta_stack:*api.getpostman-beta.com/service-account-tokens)
+    write_response 200 '{"access_token":"beta-token"}'
+    ;;
+  beta_stack:*api.getpostman-beta.com/me)
+    write_response 200 '{"team":{"id":"team-beta-stack"}}'
+    ;;
   *)
     echo "Unexpected mock curl call for scenario '$MOCK_SCENARIO': $url" >&2
     exit 99
@@ -404,6 +461,54 @@ run_resolve_with_stack() {
   fi
   if [ "$expected_status" = "failure" ] && [ "$status" -eq 0 ]; then
     echo "Expected failure but got success"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+
+  printf '%s\n' "$case_dir"
+}
+
+run_resolve_missing_dependency() {
+  local name="$1"
+  local missing="$2"
+  local case_dir="$TMP_DIR/$name"
+  local bin_dir="$case_dir/bin"
+  mkdir -p "$bin_dir"
+
+  case "$missing" in
+    jq)
+      install_fake_curl "$bin_dir"
+      ;;
+    curl)
+      cat > "$bin_dir/jq" <<'JQ'
+#!/usr/bin/env bash
+exit 0
+JQ
+      chmod +x "$bin_dir/jq"
+      ;;
+    *)
+      echo "Unknown missing dependency: $missing" >&2
+      return 1
+      ;;
+  esac
+
+  local output_file="$case_dir/github_output"
+  local log_file="$case_dir/run.log"
+  : > "$output_file"
+  set +e
+  PATH="$bin_dir" \
+  MOCK_SCENARIO="mint_success" \
+  POSTMAN_API_KEY="$TEST_API_KEY" \
+  EXISTING_TOKEN="" \
+  EXISTING_TEAM_ID="" \
+  STACK="prod" \
+  GITHUB_OUTPUT="$output_file" \
+    /bin/bash "$ROOT_DIR/scripts/resolve-service-token.sh" > "$log_file" 2>&1
+  local status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    echo "Expected missing dependency failure but got success"
     sed -n '1,160p' "$log_file"
     return 1
   fi
@@ -537,6 +642,37 @@ test_invalid_stack_input() {
   assert_contains "$case_dir/run.log" "::error::postman-stack must be one of: prod, beta; got: staging"
 }
 
+test_stack_line_break_injection_rejected() {
+  local case_dir
+  local malicious_stack
+  malicious_stack=$'prod\n::warning::owned'
+  case_dir="$(run_resolve_with_stack "stack_line_break_injection_rejected" "mint_success" "$TEST_API_KEY" "" "" "$malicious_stack" "failure")"
+  assert_contains "$case_dir/run.log" "::error::postman-stack must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "::warning::owned" &&
+    assert_not_contains "$case_dir/github_output" "access-token="
+}
+
+test_beta_stack_uses_beta_host() {
+  local case_dir
+  case_dir="$(run_resolve_with_stack "beta_stack_uses_beta_host" "beta_stack" "$TEST_API_KEY" "" "" "beta" "success")"
+  assert_contains "$case_dir/github_output" "access-token=beta-token" &&
+    assert_contains "$case_dir/github_output" "team-id=team-beta-stack"
+}
+
+test_missing_jq_dependency_fails_clearly() {
+  local case_dir
+  case_dir="$(run_resolve_missing_dependency "missing_jq_dependency" "jq")"
+  assert_contains "$case_dir/run.log" "::error::Required command 'jq' not found on runner." &&
+    assert_not_contains "$case_dir/github_output" "access-token="
+}
+
+test_missing_curl_dependency_fails_clearly() {
+  local case_dir
+  case_dir="$(run_resolve_missing_dependency "missing_curl_dependency" "curl")"
+  assert_contains "$case_dir/run.log" "::error::Required command 'curl' not found on runner." &&
+    assert_not_contains "$case_dir/github_output" "access-token="
+}
+
 test_pmak_only_legacy_path() {
   local case_dir
   case_dir="$(run_resolve "pmak_only_legacy_path" "mint_success" "$TEST_API_KEY" "" "" "success")"
@@ -563,6 +699,61 @@ test_service_account_token_lifecycle_metadata_outputs() {
     assert_contains "$case_dir/github_output" "token-expires-in=900" &&
     assert_contains "$case_dir/github_output" "token-expires-at=$TEST_EXPIRES_AT" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_token_endpoint_accepts_camel_case_response() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_accepts_camel_case_response" "camel_case_token_response" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "access-token=camel-case-token" &&
+    assert_contains "$case_dir/github_output" "team-id=team-camel" &&
+    assert_contains "$case_dir/github_output" "token-expires-in=1200" &&
+    assert_contains "$case_dir/github_output" "token-expires-at=2026-05-29T01:00:00Z" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "camel-case-token"
+}
+
+test_token_endpoint_accepts_session_token_response() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_accepts_session_token_response" "session_token_response" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "access-token=session-token" &&
+    assert_contains "$case_dir/github_output" "team-id=team-session" &&
+    assert_contains "$case_dir/github_output" "token-expires-in=600" &&
+    assert_contains "$case_dir/github_output" "token-expires-at=2026-05-29T01:10:00Z" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "session-token"
+}
+
+test_token_endpoint_accepts_http_201_response() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_accepts_http_201_response" "http_201_token_response" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "access-token=created-token" &&
+    assert_contains "$case_dir/github_output" "team-id=team-created" &&
+    assert_contains "$case_dir/github_output" "token-expires-in=450" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "created-token"
+}
+
+test_token_endpoint_http_204_without_body_fails() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_http_204_without_body_fails" "http_204_empty_response" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::Mint succeeded but no access token in response" &&
+    assert_not_contains "$case_dir/github_output" "access-token="
+}
+
+test_token_endpoint_rate_limit_response_redacts() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_rate_limit_response_redacts" "rate_limited" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 429)" &&
+    assert_contains "$case_dir/run.log" "Rate limit exceeded" &&
+    assert_contains "$case_dir/run.log" '"retryAfter": 60' &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_token_endpoint_server_html_response_omitted() {
+  local case_dir
+  case_dir="$(run_resolve "token_endpoint_server_html_response_omitted" "server_error_html" "$TEST_API_KEY" "" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 500)" &&
+    assert_contains "$case_dir/run.log" "[unparseable response omitted]" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN"
 }
 
 test_service_account_refresh_mints_new_token() {
@@ -647,10 +838,36 @@ test_numeric_team_id_resolution() {
     assert_contains "$case_dir/github_output" "team-id=13569807"
 }
 
+test_root_team_id_resolution() {
+  local case_dir
+  case_dir="$(run_resolve "root_team_id_resolution" "root_team_id" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "team-id=team-root"
+}
+
+test_session_identity_team_id_resolution() {
+  local case_dir
+  case_dir="$(run_resolve "session_identity_team_id_resolution" "session_identity_team_id" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "team-id=team-session-identity"
+}
+
 test_single_membership_team_id_resolution() {
   local case_dir
   case_dir="$(run_resolve "single_membership_team_id_resolution" "single_membership_team_id" "$TEST_API_KEY" "" "" "success")"
   assert_contains "$case_dir/github_output" "team-id=team-single-membership"
+}
+
+test_duplicate_memberships_resolve_single_team() {
+  local case_dir
+  case_dir="$(run_resolve "duplicate_memberships_resolve_single_team" "duplicate_memberships_team_id" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "team-id=team-duplicate"
+}
+
+test_singleton_team_id_wins_over_membership_noise() {
+  local case_dir
+  case_dir="$(run_resolve "singleton_team_id_wins_over_membership_noise" "singleton_wins_over_membership_noise" "$TEST_API_KEY" "" "" "success")"
+  assert_contains "$case_dir/github_output" "team-id=team-current" &&
+    assert_not_contains "$case_dir/run.log" "team-alpha" &&
+    assert_not_contains "$case_dir/run.log" "team-beta"
 }
 
 test_ambiguous_multi_team_id_requires_explicit_team_id() {
@@ -691,6 +908,16 @@ test_provided_team_id_skips_lookup() {
   assert_contains "$case_dir/github_output" "skipped=true" &&
     assert_contains "$case_dir/github_output" "team-id=team-known" &&
     assert_contains "$case_dir/run.log" "Using provided postman-team-id."
+}
+
+test_provided_team_id_line_break_injection_rejected() {
+  local case_dir
+  local malicious_team_id
+  malicious_team_id=$'team-known\naccess-token=attacker'
+  case_dir="$(run_resolve "provided_team_id_line_break_injection_rejected" "provided_team_id_skips_me" "" "$TEST_EXISTING_TOKEN" "$malicious_team_id" "failure")"
+  assert_contains "$case_dir/run.log" "::error::postman-team-id must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "access-token=attacker" &&
+    assert_not_contains "$case_dir/github_output" "access-token=attacker"
 }
 
 test_access_token_with_api_key_team_lookup() {
@@ -978,6 +1205,47 @@ test_secret_refresh_rejects_unsafe_secret_names() {
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
 }
 
+test_secret_refresh_rejects_invalid_secret_name_characters() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_rejects_invalid_secret_name_characters" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure" "POSTMAN-ACCESS-TOKEN" "POSTMAN_TEAM_ID")"
+  assert_contains "$case_dir/run.log" "::error::access-token-secret-name must contain only letters, numbers, and underscores" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_secret_refresh_rejects_secret_name_starting_with_number() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_rejects_secret_name_starting_with_number" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure" "1POSTMAN_ACCESS_TOKEN" "POSTMAN_TEAM_ID")"
+  assert_contains "$case_dir/run.log" "::error::access-token-secret-name must contain only letters, numbers, and underscores" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_secret_refresh_rejects_github_prefix_secret_name() {
+  local case_dir
+  case_dir="$(run_write_github_secrets "secret_refresh_rejects_github_prefix_secret_name" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure" "GITHUB_POSTMAN_ACCESS_TOKEN" "POSTMAN_TEAM_ID")"
+  assert_contains "$case_dir/run.log" "::error::access-token-secret-name must not start with GITHUB_." &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_secret_refresh_rejects_team_id_line_break() {
+  local case_dir
+  local malicious_team_id
+  malicious_team_id=$'team-minted\nPOSTMAN_ACCESS_TOKEN=attacker'
+  case_dir="$(run_write_github_secrets "secret_refresh_rejects_team_id_line_break" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "$malicious_team_id" "yes" "failure")"
+  assert_contains "$case_dir/run.log" "::error::resolved team ID must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "POSTMAN_ACCESS_TOKEN=attacker" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
+test_secret_refresh_rejects_github_token_line_break() {
+  local case_dir
+  local malicious_github_token
+  malicious_github_token=$'github-token-test\n::warning::owned'
+  case_dir="$(run_write_github_secrets "secret_refresh_rejects_github_token_line_break" "$malicious_github_token" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "yes" "failure")"
+  assert_contains "$case_dir/run.log" "::error::github-token must not contain newline or carriage return characters." &&
+    assert_not_contains "$case_dir/run.log" "::warning::owned" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_MINTED_TOKEN"
+}
+
 test_secret_refresh_missing_gh_cli() {
   local case_dir
   case_dir="$(run_write_github_secrets "secret_refresh_missing_gh_cli" "github-token-test" "postman-cs/example" "$TEST_MINTED_TOKEN" "team-minted" "no" "failure")"
@@ -996,17 +1264,32 @@ test_secret_refresh_github_token_lacks_secrets_write_permission() {
 for test_name in \
   test_missing_required_auth_inputs \
   test_invalid_stack_input \
+  test_stack_line_break_injection_rejected \
+  test_beta_stack_uses_beta_host \
+  test_missing_jq_dependency_fails_clearly \
+  test_missing_curl_dependency_fails_clearly \
   test_pmak_only_legacy_path \
   test_service_account_api_key_to_access_token \
   test_service_account_token_lifecycle_metadata_outputs \
+  test_token_endpoint_accepts_camel_case_response \
+  test_token_endpoint_accepts_session_token_response \
+  test_token_endpoint_accepts_http_201_response \
+  test_token_endpoint_http_204_without_body_fails \
+  test_token_endpoint_rate_limit_response_redacts \
+  test_token_endpoint_server_html_response_omitted \
   test_service_account_refresh_mints_new_token \
   test_concurrent_resolves_keep_outputs_isolated \
   test_numeric_team_id_resolution \
+  test_root_team_id_resolution \
+  test_session_identity_team_id_resolution \
   test_single_membership_team_id_resolution \
+  test_duplicate_memberships_resolve_single_team \
+  test_singleton_team_id_wins_over_membership_noise \
   test_ambiguous_multi_team_id_requires_explicit_team_id \
   test_access_token_already_provided \
   test_expired_provided_access_token_fails_without_minting \
   test_provided_team_id_skips_lookup \
+  test_provided_team_id_line_break_injection_rejected \
   test_access_token_with_api_key_team_lookup \
   test_token_endpoint_success_without_token \
   test_token_endpoint_malformed_json \
@@ -1037,6 +1320,11 @@ for test_name in \
   test_secret_refresh_missing_repo \
   test_secret_refresh_missing_resolved_values \
   test_secret_refresh_rejects_unsafe_secret_names \
+  test_secret_refresh_rejects_invalid_secret_name_characters \
+  test_secret_refresh_rejects_secret_name_starting_with_number \
+  test_secret_refresh_rejects_github_prefix_secret_name \
+  test_secret_refresh_rejects_team_id_line_break \
+  test_secret_refresh_rejects_github_token_line_break \
   test_secret_refresh_missing_gh_cli \
   test_secret_refresh_github_token_lacks_secrets_write_permission
 do

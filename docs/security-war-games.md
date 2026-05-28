@@ -145,6 +145,9 @@ The mocked unit harness now treats token safety as a required behavior:
 - PMAK-shaped, Bearer-shaped, and JWT-shaped strings are scrubbed from logged error strings;
 - input values and resolved output values containing newline or carriage-return characters are rejected before they can inject extra GitHub outputs or workflow commands;
 - repo secret names are validated before they are logged or passed to `gh secret set`;
+- alternate token response shapes such as `accessToken`, `token`, and `session.token` are accepted when they are safe strings;
+- Team ID resolution is covered across root, `user`, `identity`, `session.identity`, and membership-list response shapes;
+- missing runner dependencies fail with explicit setup errors before network calls;
 - `/me` success bodies that do not contain a Team ID are omitted because they may include account metadata;
 - `gh secret set` tests verify the token/team values are passed via stdin and not written to the mock command log.
 
@@ -262,6 +265,9 @@ scripts/compare-workflow-performance.sh \
 | Token endpoint returns newline/control characters in token or expiry metadata | Action rejects the value before writing GitHub outputs. |
 | `/me` returns newline/control characters in Team ID | Action rejects the value before writing GitHub outputs. |
 | Secret refresh receives unsafe secret names | Action rejects the names before calling `gh secret set`. |
+| Missing `curl` or `jq` on runner | Action fails with a setup error before token resolution. |
+| Alternate token endpoint schemas | Action accepts supported string token fields and preserves expiry metadata. |
+| Duplicate membership Team IDs | Action resolves the single unique Team ID rather than failing ambiguity. |
 | Generated token output | Token is masked with `::add-mask::`. |
 | Secret-refresh mode without GitHub token | Action fails before attempting writes. |
 | Secret-refresh mode with scoped token | Writes only configured secret names. |
