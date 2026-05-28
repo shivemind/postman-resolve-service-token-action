@@ -1,30 +1,49 @@
 # postman-resolve-service-token-action
 
-Public open-alpha composite GitHub Action that mints a Postman service-account access token, resolves the team ID, and optionally writes both back to repo secrets.
+Composite GitHub Action for resolving Postman auth for CSE-managed automations.
 
-This action is the producer side of the new programmatic token flow that replaces the manual session-token extraction step described in [`postman-cs/postman-api-onboarding-action`](https://github.com/postman-cs/postman-api-onboarding-action). Mint a fresh access token in CI, hand it to the onboarding action by output, or persist it as a repo secret for other workflows to consume.
+The action accepts either:
 
-## When to use
+- a Postman service-account API key, then exchanges it for a short-lived access token; or
+- an existing Postman access token, then passes it through without minting a new token.
 
-- **Inline minting per run.** Replace the inline mint snippet in [`postman-cs/postman-service-account-onboarding-sample`](https://github.com/postman-cs/postman-service-account-onboarding-sample) with a single `uses:` call that emits `outputs.token` and `outputs.team-id` for the next step.
-- **Scheduled refresh.** Run this action on a schedule with `write-github-secret: true` to rotate `POSTMAN_ACCESS_TOKEN` for downstream workflows that read it from `secrets`.
-- **Backward compatibility.** Pass an existing token through `postman-access-token` to skip the mint step entirely. The action returns the value verbatim, so workflows that already manage the token can adopt the action with no behavior change.
+It also resolves the Postman team ID and can optionally refresh repo secrets for downstream workflows.
 
-## Quick start
+## When To Use
 
-### Inline (mint, hand off to onboarding action)
+- Keep existing PMAK/API-key workflows running unchanged while templates add optional access-token support.
+- Mint a short-lived access token inline before a downstream CSE automation step.
+- Refresh repo secrets such as `POSTMAN_ACCESS_TOKEN` and `POSTMAN_TEAM_ID` on a schedule.
+- Validate the GitHub Actions path before porting the same pattern into Azure DevOps templates.
+
+## Customer Usage
+
+### Existing API-Key Flow
+
+Existing customers that already pass a Postman API key directly to a CSE automation do not need to change anything.
+
+```yaml
+- uses: postman-cs/postman-api-onboarding-action@v0
+  with:
+    project-name: my-service
+    spec-path: openapi.yaml
+    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+```
+
+For template migrations, keep this path available. Add access-token inputs to downstream templates as optional enhancements rather than replacing the PMAK input outright.
+
+### Service-Account API-Key Flow
+
+Use a service-account API key as `POSTMAN_API_KEY`. The action exchanges it for a short-lived access token, masks the generated token, resolves the team ID, and exposes both as outputs.
 
 ```yaml
 jobs:
   onboarding:
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
     steps:
       - uses: actions/checkout@v5
 
-      - id: postman_token
+      - id: postman_auth
         uses: postman-cs/postman-resolve-service-token-action@v0
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
@@ -34,18 +53,45 @@ jobs:
           project-name: my-service
           spec-path: openapi.yaml
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-          postman-access-token: ${{ steps.postman_token.outputs.token }}
-          postman-team-id: ${{ steps.postman_token.outputs.team-id }}
+          postman-access-token: ${{ steps.postman_auth.outputs.access-token }}
+          postman-team-id: ${{ steps.postman_auth.outputs.team-id }}
 ```
 
-### Scheduled refresh (write `POSTMAN_ACCESS_TOKEN` for other workflows)
+### Access-Token-Provided Flow
+
+If a workflow already manages `POSTMAN_ACCESS_TOKEN`, pass it in. The mint step is skipped and the supplied token is returned as the action output.
+
+```yaml
+- id: postman_auth
+  uses: postman-cs/postman-resolve-service-token-action@v0
+  with:
+    postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+    postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
+```
+
+If `postman-team-id` is omitted, the action calls `/me` with only `Authorization: Bearer <token>` and attempts to resolve the team ID from the response.
+
+### GitHub Actions Template Integration
+
+A minimal downstream template integration is available at [`examples/github-actions-template-integration.yml`](examples/github-actions-template-integration.yml).
+
+The least disruptive migration path is:
+
+1. Keep `POSTMAN_API_KEY` as an accepted downstream input.
+2. Add optional `POSTMAN_ACCESS_TOKEN` and `POSTMAN_TEAM_ID` support.
+3. Prefer the access token when present.
+4. Fall back to the existing API-key behavior when the access token is absent.
+
+### Scheduled Secret Refresh
+
+Use this when downstream CSE automations expect repo secrets such as `POSTMAN_ACCESS_TOKEN`.
 
 ```yaml
 name: Refresh Postman service-account token
 
 on:
   schedule:
-    - cron: '0 6 * * *'   # daily at 06:00 UTC
+    - cron: '0 6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -59,64 +105,120 @@ jobs:
           github-token: ${{ secrets.SECRETS_WRITE_PAT }}
 ```
 
+`github-token` must be a PAT or GitHub App installation token with repo secret write permission. The default workflow `GITHUB_TOKEN` cannot write repo secrets.
+
+### Azure DevOps Adaptation Notes
+
+This repository is a GitHub composite action, so Azure DevOps should not consume it directly. After the GitHub path is validated, port the same shell behavior into an ADO template step:
+
+- Store the service-account API key in a secure pipeline variable.
+- Call the production `/service-account-tokens` endpoint to mint the access token.
+- Call `/me` with Bearer auth to resolve the team ID when needed.
+- Mark generated tokens with ADO secret masking, for example `##vso[task.setsecret]`.
+- Set output variables for downstream tasks, for example `POSTMAN_ACCESS_TOKEN` and `POSTMAN_TEAM_ID`.
+- Preserve the current PMAK/API-key-only path as a fallback for existing customers.
+
 ## Inputs
 
 | Input | Default | Notes |
 | --- | --- | --- |
-| `postman-api-key` | | Postman service-account API key (PMAK) used to mint the access token. Must be a **service-account** key, not a personal user key - the underlying `/service-account-tokens` endpoint requires service-account auth. Required when `postman-access-token` is not provided. |
-| `postman-access-token` | | Optional pre-existing access token. When set, the mint step is skipped and the value is returned verbatim. Use this to preserve existing workflows that manage the token externally. |
-| `postman-team-id` | | Optional pre-known team ID. When set, the `/me` lookup is skipped and the value is returned verbatim. |
+| `postman-api-key` | | Postman API key (PMAK). Use a service-account API key to mint a short-lived access token. Required when `postman-access-token` is not provided. |
+| `postman-access-token` | | Optional pre-existing access token. When set, the mint step is skipped and the value is returned via `token` and `access-token`. |
+| `postman-team-id` | | Optional pre-known team ID. When set, the `/me` lookup is skipped. |
 | `postman-stack` | `prod` | One of `prod` (`api.getpostman.com`) or `beta` (`api.getpostman-beta.com`). |
 | `write-github-secret` | `'false'` | When `'true'`, writes the resolved token and team ID to repo secrets. |
 | `access-token-secret-name` | `POSTMAN_ACCESS_TOKEN` | Secret name to receive the access token. Used only when `write-github-secret` is `'true'`. |
 | `team-id-secret-name` | `POSTMAN_TEAM_ID` | Secret name to receive the team ID. Used only when `write-github-secret` is `'true'`. |
-| `github-token` | | PAT or GitHub App installation token with secrets write permission on the target repo. Required when `write-github-secret` is `'true'`. The default `GITHUB_TOKEN` cannot write repo secrets. |
+| `github-token` | | PAT or GitHub App installation token with secrets write permission on the target repo. Required when `write-github-secret` is `'true'`. |
 
 ## Outputs
 
 | Output | Description |
 | --- | --- |
-| `token` | Resolved Postman access token (masked in logs). Either freshly minted or the passed-through value of `postman-access-token`. |
-| `team-id` | Resolved Postman team ID. Either looked up via `/me` or the passed-through value of `postman-team-id`. |
+| `access-token` | Resolved Postman access token. Prefer this output in new workflows. |
+| `token` | Same value as `access-token`; retained for existing callers. |
+| `team-id` | Resolved Postman team ID. Either looked up via `/me` or passed through from `postman-team-id`. |
 | `skipped` | `'true'` when the mint step was skipped because `postman-access-token` was provided. |
+| `auth-method` | `provided-access-token` or `service-account-api-key`. |
 
-## Permissions and secrets
+## Token And Team Resolution
 
-### Minting only (default)
+When `postman-access-token` is provided:
 
-The default mode requires only `postman-api-key` (a service-account PMAK). No GitHub permissions beyond what your job already has.
+- the action does not call `/service-account-tokens`;
+- the provided token is masked;
+- `skipped` is set to `true`;
+- `/me` is called only if `postman-team-id` was not provided.
 
-### Writing repo secrets
+When only `postman-api-key` is provided:
 
-`write-github-secret: 'true'` requires `github-token` to be a PAT or GitHub App installation token with **secrets write** permission on the target repo. The workflow `GITHUB_TOKEN` cannot write repo secrets and will fail.
+- the action calls `POST /service-account-tokens` on the selected Postman stack;
+- the API key is sent in both the `x-api-key` header and JSON body for compatibility with the existing endpoint behavior;
+- the generated access token is masked and exposed as `token` and `access-token`;
+- `/me` is called to resolve the team ID.
 
-**Recommended:** create a fine-grained PAT scoped to the target repo with the **Secrets: Read and write** and **Metadata: Read** permissions, store it as a separate secret (for example `SECRETS_WRITE_PAT`), and pass it via `github-token`. If your org does not allow fine-grained PATs against its repos without prior approval, a classic PAT with the `repo` scope works as a fallback - keep its expiry short.
+## Secret Handling
 
-## Backward compatibility
+- The action masks the Postman API key and any resolved access token.
+- Generated tokens are written to `$GITHUB_OUTPUT`, not printed as normal log messages.
+- Error responses are redacted before logging keys such as `token`, `access_token`, `apiKey`, `secret`, `authorization`, and similar auth fields.
+- `write-github-secret: 'true'` writes the resolved values with `gh secret set` and logs only the secret names.
 
-Workflows that already store `POSTMAN_ACCESS_TOKEN` as a repo secret and pass it directly to downstream actions can adopt this action without disruption:
+## Failure Modes
 
-```yaml
-- id: postman_token
-  uses: postman-cs/postman-resolve-service-token-action@v0
-  with:
-    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
-    postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}   # skip mint
-    postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}             # skip /me
-```
+The action fails with explicit GitHub Actions errors when:
 
-When both inputs are provided, the action is effectively a passthrough with `outputs.skipped == 'true'`. Removing the input values switches the workflow to fresh minting on every run.
+- `postman-api-key` is missing and `postman-access-token` is not provided;
+- `postman-stack` is not `prod` or `beta`;
+- `github-token` is missing while `write-github-secret` is `'true'`;
+- the service-account token endpoint rejects the key, including invalid or inactive keys;
+- a network error prevents the token or `/me` call;
+- the token endpoint succeeds but does not return an access token;
+- `/me` succeeds but no team ID can be read from the response;
+- `gh` is unavailable when secret writing is enabled.
 
-## Stack selection
+## Stack Selection
 
 | `postman-stack` | API host |
 | --- | --- |
-| `prod` (default) | `https://api.getpostman.com` |
+| `prod` | `https://api.getpostman.com` |
 | `beta` | `https://api.getpostman-beta.com` |
 
-`api.getpostman-beta.com` sits behind Postman Access. GitHub-hosted runners cannot reach it; use a self-hosted runner inside the Access perimeter for the `beta` stack. See [`postman-service-account-onboarding-sample`](https://github.com/postman-cs/postman-service-account-onboarding-sample) for the full beta runner setup.
+Production is the default. `beta` is useful for internal validation but may require a runner with access to the beta perimeter.
 
-## Open-alpha release strategy
+## Local Validation
+
+```bash
+tests/test-resolve-service-token.sh
+$(go env GOPATH)/bin/actionlint
+```
+
+The test harness uses mocked HTTP calls. Do not commit real Postman API keys, access tokens, customer data, or test secrets.
+
+## Migration Lift
+
+For GitHub Actions templates, the expected lift is low to moderate:
+
+- Low when downstream automations already accept `postman-access-token` and `postman-team-id`.
+- Moderate when downstream automations only accept `postman-api-key`; those templates need optional access-token inputs and auth selection logic.
+- Higher only when a customer requires scheduled repo-secret refresh, because they must provide a GitHub PAT or App token that can write repo secrets.
+
+## Benefits
+
+- Short-lived access tokens reduce reliance on long-lived manually copied tokens.
+- Service-account ownership is easier to reason about than user-owned session tokens.
+- Scheduled refresh enables existing downstream workflows to keep reading stable secret names.
+- The action gives CSE templates one consistent place to resolve token and team ID values.
+
+## Risk Vectors
+
+- Customers may provide a personal PMAK instead of a service-account PMAK; the mint endpoint should fail clearly.
+- Secret-writing mode introduces a GitHub PAT or App-token management requirement.
+- Bearer-only `/me` team ID resolution depends on the shape and permissions of the `/me` response.
+- Downstream templates must preserve PMAK fallback behavior until customer migrations are complete.
+- Access-token TTL and refresh cadence need to be aligned with long-running or scheduled customer workflows.
+
+## Open-Alpha Release Strategy
 
 - Open-alpha channel tags use `v0.x.y`.
 - Pin immutable tags such as `v0.1.0` for reproducibility.

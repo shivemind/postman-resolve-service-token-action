@@ -1,0 +1,26 @@
+name: Postman CSE automation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-postman-automation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: postman_auth
+        uses: postman-cs/postman-resolve-service-token-action@v0
+        with:
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+          postman-team-id: ${{ secrets.POSTMAN_TEAM_ID }}
+
+      - name: Run downstream CSE automation
+        uses: postman-cs/postman-api-onboarding-action@v0
+        with:
+          project-name: my-service
+          spec-path: openapi.yaml
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_auth.outputs.access-token }}
+          postman-team-id: ${{ steps.postman_auth.outputs.team-id }}
