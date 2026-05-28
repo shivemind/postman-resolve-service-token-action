@@ -56,6 +56,33 @@ assert_secret_only_masked_in_log() {
   fi
 }
 
+assert_secret_masked_before_first_output() {
+  local file="$1"
+  local secret="$2"
+  local mask_line
+  local first_unmasked_line
+  mask_line="$(grep -nF "::add-mask::$secret" "$file" | head -n 1 | cut -d: -f1 || true)"
+  first_unmasked_line="$(grep -nF "$secret" "$file" | grep -Fv "::add-mask::$secret" | head -n 1 | cut -d: -f1 || true)"
+
+  if [ -z "$mask_line" ]; then
+    echo "Expected mask command for secret in $file"
+    sed -n '1,160p' "$file"
+    return 1
+  fi
+
+  if [ -z "$first_unmasked_line" ]; then
+    echo "Expected secret to appear in a simulated output line in $file"
+    sed -n '1,160p' "$file"
+    return 1
+  fi
+
+  if [ "$mask_line" -ge "$first_unmasked_line" ]; then
+    echo "Expected mask command before first output containing the secret"
+    sed -n '1,160p' "$file"
+    return 1
+  fi
+}
+
 install_fake_curl() {
   local bin_dir="$1"
   cat > "$bin_dir/curl" <<'CURL'
@@ -148,10 +175,10 @@ case "$MOCK_SCENARIO:$url" in
     fi
     ;;
   bearer_only_unauthorized:*/me)
-    write_response 401 '{"error":{"name":"unauthorizedError","message":"You are not authorized to perform this action."}}'
+    write_response 401 '{"error":{"name":"unauthorizedError","message":"You are not authorized to perform this action for existing-access-token."},"authorization":"Bearer existing-access-token"}'
     ;;
   invalid_key:*service-account-tokens)
-    write_response 401 '{"error":{"message":"inactive key","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log"}}}'
+    write_response 401 '{"error":{"message":"inactive key PMAK-test-api-key Bearer minted-access-token","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log","authorization":"Bearer minted-access-token","auth":{"token":"minted-access-token"}}}}'
     ;;
   no_team:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token"}'
@@ -194,6 +221,45 @@ run_resolve() {
   EXISTING_TEAM_ID="$team_id" \
   STACK="prod" \
   GITHUB_OUTPUT="$output_file" \
+    bash "$ROOT_DIR/scripts/resolve-service-token.sh" > "$log_file" 2>&1
+  local status=$?
+  set -e
+
+  if [ "$expected_status" = "success" ] && [ "$status" -ne 0 ]; then
+    echo "Expected success but got exit $status"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+  if [ "$expected_status" = "failure" ] && [ "$status" -eq 0 ]; then
+    echo "Expected failure but got success"
+    sed -n '1,160p' "$log_file"
+    return 1
+  fi
+
+  printf '%s\n' "$case_dir"
+}
+
+run_resolve_with_stdout_outputs() {
+  local name="$1"
+  local scenario="$2"
+  local api_key="$3"
+  local access_token="$4"
+  local team_id="$5"
+  local expected_status="$6"
+  local case_dir="$TMP_DIR/$name"
+  local bin_dir="$case_dir/bin"
+  mkdir -p "$bin_dir"
+  install_fake_curl "$bin_dir"
+
+  local log_file="$case_dir/run.log"
+  set +e
+  PATH="$bin_dir:$PATH" \
+  MOCK_SCENARIO="$scenario" \
+  POSTMAN_API_KEY="$api_key" \
+  EXISTING_TOKEN="$access_token" \
+  EXISTING_TEAM_ID="$team_id" \
+  STACK="prod" \
+  GITHUB_OUTPUT="/dev/stdout" \
     bash "$ROOT_DIR/scripts/resolve-service-token.sh" > "$log_file" 2>&1
   local status=$?
   set -e
@@ -270,6 +336,8 @@ test_bearer_only_team_id_fallback_failure_message() {
   case_dir="$(run_resolve "bearer_only_team_id_fallback_failure_message" "bearer_only_unauthorized" "" "$TEST_EXISTING_TOKEN" "" "failure")"
   assert_contains "$case_dir/run.log" "::error::/me failed (HTTP 401) while resolving team ID from postman-access-token. Provide postman-team-id to skip Bearer-only lookup, or provide postman-api-key for Team ID lookup." &&
     assert_contains "$case_dir/run.log" "unauthorizedError" &&
+    assert_contains "$case_dir/run.log" "[REDACTED]" &&
+    assert_not_contains "$case_dir/run.log" "Bearer $TEST_EXISTING_TOKEN" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
 }
 
@@ -279,8 +347,23 @@ test_invalid_or_inactive_api_key_response() {
   assert_contains "$case_dir/run.log" "::error::service-account-tokens failed (HTTP 401)" &&
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY" &&
     assert_not_contains "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_not_contains "$case_dir/run.log" "$TEST_API_KEY $TEST_MINTED_TOKEN" &&
     assert_not_contains "$case_dir/run.log" "do-not-log" &&
     assert_contains "$case_dir/run.log" "[REDACTED]"
+}
+
+test_generated_token_masked_before_stdout_output() {
+  local case_dir
+  case_dir="$(run_resolve_with_stdout_outputs "generated_token_masked_before_stdout_output" "mint_success" "$TEST_API_KEY" "" "" "success")"
+  assert_secret_masked_before_first_output "$case_dir/run.log" "$TEST_MINTED_TOKEN" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
+}
+
+test_provided_token_masked_before_stdout_output() {
+  local case_dir
+  case_dir="$(run_resolve_with_stdout_outputs "provided_token_masked_before_stdout_output" "token_passthrough" "$TEST_API_KEY" "$TEST_EXISTING_TOKEN" "" "success")"
+  assert_secret_masked_before_first_output "$case_dir/run.log" "$TEST_EXISTING_TOKEN" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
 }
 
 test_unable_to_resolve_team_id() {
@@ -338,6 +421,8 @@ for test_name in \
   test_bearer_only_team_id_fallback \
   test_bearer_only_team_id_fallback_failure_message \
   test_invalid_or_inactive_api_key_response \
+  test_generated_token_masked_before_stdout_output \
+  test_provided_token_masked_before_stdout_output \
   test_unable_to_resolve_team_id \
   test_network_error \
   test_write_github_secrets_masks_token_and_writes_expected_names

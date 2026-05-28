@@ -24,10 +24,26 @@ log_error() {
   echo "::error::$*"
 }
 
+redact_known_values() {
+  local text="$1"
+  local value
+  for value in "$POSTMAN_API_KEY" "$EXISTING_TOKEN" "${TOKEN:-}"; do
+    if [ -n "$value" ]; then
+      text="${text//$value/[REDACTED]}"
+    fi
+  done
+  printf '%s\n' "$text"
+}
+
 sanitize_response() {
   local body="$1"
   if command -v jq >/dev/null 2>&1; then
-    printf '%s' "$body" | jq '
+    local sanitized
+    sanitized="$(printf '%s' "$body" | jq '
+      def scrub_secret_string:
+        gsub("PMAK-[A-Za-z0-9._-]+"; "[REDACTED]")
+        | gsub("Bearer[[:space:]]+[A-Za-z0-9._~+/=-]+"; "Bearer [REDACTED]")
+        | gsub("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"; "[REDACTED]");
       def redact:
         if type == "object" then
           with_entries(
@@ -39,11 +55,14 @@ sanitize_response() {
           )
         elif type == "array" then
           map(redact)
+        elif type == "string" then
+          scrub_secret_string
         else
           .
         end;
       redact
-    ' 2>/dev/null || printf '%s\n' '[unparseable response omitted]'
+    ' 2>/dev/null)" || sanitized='[unparseable response omitted]'
+    redact_known_values "$sanitized"
   else
     printf '%s\n' '[response omitted: jq is required to safely redact error responses]'
   fi
@@ -53,25 +72,31 @@ summarize_me_response() {
   local body="$1"
   if command -v jq >/dev/null 2>&1; then
     if printf '%s' "$body" | jq -e 'has("error") or has("errors") or has("status") or has("title") or has("detail")' >/dev/null 2>&1; then
-      printf '%s' "$body" | jq '
+      local summary
+      summary="$(printf '%s' "$body" | jq '
+        def scrub_secret_string:
+          gsub("PMAK-[A-Za-z0-9._-]+"; "[REDACTED]")
+          | gsub("Bearer[[:space:]]+[A-Za-z0-9._~+/=-]+"; "Bearer [REDACTED]")
+          | gsub("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+"; "[REDACTED]");
         {
           status: .status?,
-          title: .title?,
-          detail: .detail?,
+          title: (.title? | if type == "string" then scrub_secret_string else . end),
+          detail: (.detail? | if type == "string" then scrub_secret_string else . end),
           error: (
             if (.error | type) == "object" then
               {
                 name: .error.name?,
-                message: .error.message?
+                message: (.error.message? | if type == "string" then scrub_secret_string else . end)
               }
             else
-              .error?
+              (.error? | if type == "string" then scrub_secret_string else . end)
             end
           ),
           errors: .errors?
         }
         | with_entries(select(.value != null))
-      ' 2>/dev/null || printf '%s\n' '[unparseable /me response omitted]'
+      ' 2>/dev/null)" || summary='[unparseable /me response omitted]'
+      redact_known_values "$summary"
     else
       printf '%s\n' '[/me response omitted: response may include account metadata]'
     fi

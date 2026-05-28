@@ -111,6 +111,18 @@ Not validated as passing:
 
 - Bearer-only Team ID fallback. The minted token failed `/me` when replayed without an API key. Direct probes with `Authorization: Bearer` and `x-access-token` both returned HTTP `401`.
 
+## Token Safety Findings
+
+The mocked unit harness now treats token safety as a required behavior:
+
+- API keys, provided access tokens, and generated access tokens must be emitted through `::add-mask::`;
+- generated/provided tokens are masked before any simulated stdout output line contains the token value;
+- token endpoint error bodies redact auth-like keys such as `apiKey`, `access_token`, `secret`, `authorization`, and nested `auth` values;
+- known input/output secret values are redacted even when an API error echoes them inside ordinary message text;
+- PMAK-shaped, Bearer-shaped, and JWT-shaped strings are scrubbed from logged error strings;
+- `/me` success bodies that do not contain a Team ID are omitted because they may include account metadata;
+- `gh secret set` tests verify the token/team values are passed via stdin and not written to the mock command log.
+
 ## Full Pipeline War Game
 
 After downstream templates are ready to accept the resolved access token:
