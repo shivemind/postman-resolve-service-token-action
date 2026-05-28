@@ -50,8 +50,31 @@ Initial Jade Global auth-only runs:
 | `26605714995` | failure | Service-account token exchange returned `401`; invalid-key and missing-input negative tests behaved as expected. |
 | `26605752107` | failure | Existing `POSTMAN_ACCESS_TOKEN` also failed `/me` with `401`; service-account exchange still returned `401`. |
 | `26605880602` | mixed | Fresh non-service PMAK succeeded for old API-key `/me` and failed `/service-account-tokens` as expected. Fresh supplied access token failed Bearer `/me` with `401`. |
+| `26605968824` | success | Controlled scale run completed: 8 service-account resolver attempts, 8 non-service PMAK baseline attempts, and 4 fresh-token passthrough attempts. |
 
 Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Jade Global repo still does not contain a valid active service-account API key for `POSTMAN_API_KEY`. The fresh supplied token did not work as a Bearer token for `/me`, so it is not currently suitable for this action's access-token-provided Team ID fallback. Full downstream smoke and full-pipeline service-account war games are blocked until `POSTMAN_API_KEY` is rotated to an active service-account key.
+
+## Controlled Scale Findings
+
+The first scale run used capped GitHub Actions matrix parallelism rather than a load test:
+
+- Run: `26605968824`
+- Matrix size: 20 jobs total
+- Max parallelism per matrix: 2
+- Service-account resolver attempts: 8
+- Non-service PMAK baseline attempts: 8
+- Fresh access-token passthrough attempts: 4
+
+Results:
+
+| Path | Count | Result |
+| --- | ---: | --- |
+| Non-service PMAK `/me` baseline | 8 | 8/8 returned HTTP `200`; min `0.288s`, max `0.576s`, avg `0.413s`. |
+| Non-service PMAK service-token exchange | 8 | 8/8 failed as expected. |
+| Current service-account resolver path | 8 | 8/8 failed because `POSTMAN_API_KEY` is not a valid service-account PMAK. |
+| Fresh access-token passthrough | 4 | 4/4 failed Team ID resolution because Bearer `/me` returned `401`. |
+
+This confirms normal PMAK behavior is stable under modest concurrency and the action handles repeated auth failures without leaking secrets or causing workflow instability. It does not yet validate successful service-account token minting at scale; that remains blocked on a valid service-account PMAK.
 
 ## Full Pipeline War Game
 
