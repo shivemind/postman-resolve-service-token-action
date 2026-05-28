@@ -51,6 +51,7 @@ Initial Jade Global auth-only runs:
 | `26605752107` | failure | Existing `POSTMAN_ACCESS_TOKEN` also failed `/me` with `401`; service-account exchange still returned `401`. |
 | `26605880602` | mixed | Fresh non-service PMAK succeeded for old API-key `/me` and failed `/service-account-tokens` as expected. Fresh supplied access token failed Bearer `/me` with `401`. |
 | `26605968824` | success | Controlled scale run completed: 8 service-account resolver attempts, 8 non-service PMAK baseline attempts, and 4 fresh-token passthrough attempts. |
+| `26606131433` | mixed | Backward compatibility existing PMAK test passed; secret-refresh canary passed; Bearer-only Team ID fallback failed because supplied Bearer token returned `/me` HTTP `401`. |
 
 Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Jade Global repo still does not contain a valid active service-account API key for `POSTMAN_API_KEY`. The fresh supplied token did not work as a Bearer token for `/me`, so it is not currently suitable for this action's access-token-provided Team ID fallback. Full downstream smoke and full-pipeline service-account war games are blocked until `POSTMAN_API_KEY` is rotated to an active service-account key.
 
@@ -75,6 +76,20 @@ Results:
 | Fresh access-token passthrough | 4 | 4/4 failed Team ID resolution because Bearer `/me` returned `401`. |
 
 This confirms normal PMAK behavior is stable under modest concurrency and the action handles repeated auth failures without leaking secrets or causing workflow instability. It does not yet validate successful service-account token minting at scale; that remains blocked on a valid service-account PMAK.
+
+## Compatibility And Secret Refresh Findings
+
+Run `26606131433` added three explicit canaries:
+
+| Test | Result | Notes |
+| --- | --- | --- |
+| Backward compatibility: existing PMAK | Pass | Non-service PMAK succeeded against direct `/me` API-key auth in `0.426s`. The resolver rejected the same non-service PMAK at `/service-account-tokens` with HTTP `401`, as expected. |
+| Bearer-only Team ID fallback | Fail | The action skipped minting and attempted `/me` with only `Authorization: Bearer <token>`, but `/me` returned HTTP `401`; no Team ID was resolved. |
+| Secret refresh behavior | Pass | The action wrote canary repo secrets `POSTMAN_WARGAME_REFRESH_TOKEN` and `POSTMAN_WARGAME_REFRESH_TEAM_ID`, verified they existed, then cleaned them up. |
+
+Backward compatibility conclusion: existing customers that continue passing PMAKs directly to downstream CSE automations remain unaffected. The resolver should not be inserted in front of a normal PMAK-only customer flow unless the customer provides a service-account PMAK.
+
+Secret refresh conclusion: the GitHub secret write path works with a token that has repo secret write permission. The canary used explicit `postman-team-id` so the test covered GitHub secret refresh behavior without depending on Bearer `/me` success.
 
 ## Full Pipeline War Game
 
