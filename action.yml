@@ -6,11 +6,11 @@ inputs:
     required: false
     default: ""
   postman-access-token:
-    description: Optional pre-existing Postman access token. When provided, the mint step is skipped and this value is returned via outputs.token. Use this to preserve compatibility with workflows that already manage the token externally.
+    description: Optional pre-existing Postman access token. When provided, the mint step is skipped and this value is returned via outputs.token. If postman-team-id is omitted, the action attempts Bearer-only /me lookup, which may not be supported by every Postman token type.
     required: false
     default: ""
   postman-team-id:
-    description: Optional pre-known Postman team ID. When provided, the team ID lookup is skipped and this value is returned via outputs.team-id.
+    description: Optional pre-known Postman team ID. When provided, the team ID lookup is skipped and this value is returned via outputs.team-id. Recommended when supplying postman-access-token directly.
     required: false
     default: ""
   postman-stack:

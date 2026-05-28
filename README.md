@@ -71,6 +71,18 @@ If a workflow already manages `POSTMAN_ACCESS_TOKEN`, pass it in. The mint step 
 
 If `postman-team-id` is omitted, the action calls `/me` with only `Authorization: Bearer <token>` and attempts to resolve the team ID from the response.
 
+Production validation on May 28, 2026 found that short-lived tokens minted from service-account PMAKs did not authorize `/me` when replayed later as Bearer-only tokens. For that token type, pass `postman-team-id` when using `postman-access-token` directly, or pass the service-account PMAK to this action so it can mint the token and resolve Team ID in the same step.
+
+You can also pass a PMAK alongside `postman-access-token` purely for Team ID lookup. The action still skips token minting when `postman-access-token` is set.
+
+```yaml
+- id: postman_auth
+  uses: postman-cs/postman-resolve-service-token-action@v0
+  with:
+    postman-access-token: ${{ secrets.POSTMAN_ACCESS_TOKEN }}
+    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+```
+
 ### GitHub Actions Template Integration
 
 A minimal downstream template integration is available at [`examples/github-actions-template-integration.yml`](examples/github-actions-template-integration.yml).
@@ -113,7 +125,7 @@ This repository is a GitHub composite action, so Azure DevOps should not consume
 
 - Store the service-account API key in a secure pipeline variable.
 - Call the production `/service-account-tokens` endpoint to mint the access token.
-- Call `/me` with Bearer auth to resolve the team ID when needed.
+- Call `/me` with the minted Bearer token plus the service-account API key to resolve the team ID when needed, or require the caller to provide `POSTMAN_TEAM_ID`.
 - Mark generated tokens with ADO secret masking, for example `##vso[task.setsecret]`.
 - Set output variables for downstream tasks, for example `POSTMAN_ACCESS_TOKEN` and `POSTMAN_TEAM_ID`.
 - Preserve the current PMAK/API-key-only path as a fallback for existing customers.
@@ -148,14 +160,15 @@ When `postman-access-token` is provided:
 - the action does not call `/service-account-tokens`;
 - the provided token is masked;
 - `skipped` is set to `true`;
-- `/me` is called only if `postman-team-id` was not provided.
+- `/me` is called only if `postman-team-id` was not provided;
+- if Bearer-only `/me` returns `401`, provide `postman-team-id` explicitly. This is expected for short-lived service-account tokens in current production validation.
 
 When only `postman-api-key` is provided:
 
 - the action calls `POST /service-account-tokens` on the selected Postman stack;
 - the API key is sent in both the `x-api-key` header and JSON body for compatibility with the existing endpoint behavior;
 - the generated access token is masked and exposed as `token` and `access-token`;
-- `/me` is called to resolve the team ID.
+- `/me` is called with the minted token and service-account API key to resolve the team ID.
 
 ## Secret Handling
 
@@ -175,6 +188,7 @@ The action fails with explicit GitHub Actions errors when:
 - a network error prevents the token or `/me` call;
 - the token endpoint succeeds but does not return an access token;
 - `/me` succeeds but no team ID can be read from the response;
+- Bearer-only `/me` rejects a provided access token and no `postman-team-id` was supplied;
 - `gh` is unavailable when secret writing is enabled.
 
 ## Stack Selection
@@ -216,7 +230,7 @@ For GitHub Actions templates, the expected lift is low to moderate:
 
 - Customers may provide a personal PMAK instead of a service-account PMAK; the mint endpoint should fail clearly.
 - Secret-writing mode introduces a GitHub PAT or App-token management requirement.
-- Bearer-only `/me` team ID resolution depends on the shape and permissions of the `/me` response.
+- Bearer-only `/me` team ID resolution depends on Postman's token type support. Validated short-lived service-account tokens currently need either `postman-team-id` or same-step resolution with the service-account PMAK.
 - Downstream templates must preserve PMAK fallback behavior until customer migrations are complete.
 - Access-token TTL and refresh cadence need to be aligned with long-running or scheduled customer workflows.
 

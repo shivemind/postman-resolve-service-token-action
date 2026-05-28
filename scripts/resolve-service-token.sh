@@ -49,6 +49,37 @@ sanitize_response() {
   fi
 }
 
+summarize_me_response() {
+  local body="$1"
+  if command -v jq >/dev/null 2>&1; then
+    if printf '%s' "$body" | jq -e 'has("error") or has("errors") or has("status") or has("title") or has("detail")' >/dev/null 2>&1; then
+      printf '%s' "$body" | jq '
+        {
+          status: .status?,
+          title: .title?,
+          detail: .detail?,
+          error: (
+            if (.error | type) == "object" then
+              {
+                name: .error.name?,
+                message: .error.message?
+              }
+            else
+              .error?
+            end
+          ),
+          errors: .errors?
+        }
+        | with_entries(select(.value != null))
+      ' 2>/dev/null || printf '%s\n' '[unparseable /me response omitted]'
+    else
+      printf '%s\n' '[/me response omitted: response may include account metadata]'
+    fi
+  else
+    printf '%s\n' '[/me response omitted: jq is required to safely summarize /me responses]'
+  fi
+}
+
 call_curl() {
   local response_file="$1"
   shift
@@ -147,8 +178,12 @@ else
   rm -f "$ME_RESPONSE_FILE"
 
   if [ "$ME_CODE" -lt 200 ] || [ "$ME_CODE" -ge 300 ]; then
-    log_error "/me failed (HTTP $ME_CODE)"
-    sanitize_response "$ME_BODY"
+    if [ -z "$POSTMAN_API_KEY" ]; then
+      log_error "/me failed (HTTP $ME_CODE) while resolving team ID from postman-access-token. Provide postman-team-id to skip Bearer-only lookup, or provide postman-api-key for Team ID lookup."
+    else
+      log_error "/me failed (HTTP $ME_CODE) while resolving team ID."
+    fi
+    summarize_me_response "$ME_BODY"
     exit 1
   fi
 
@@ -183,8 +218,8 @@ else
     | .[0] // empty
   ')"
   if [ -z "$TEAM_ID" ] || [ "$TEAM_ID" = "null" ]; then
-    log_error "Could not read team id from /me response"
-    sanitize_response "$ME_BODY"
+    log_error "Could not read team id from /me response. Provide postman-team-id to skip Team ID lookup."
+    summarize_me_response "$ME_BODY"
     exit 1
   fi
   write_output "team-id" "$TEAM_ID"

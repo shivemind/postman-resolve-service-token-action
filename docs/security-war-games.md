@@ -52,8 +52,10 @@ Initial Jade Global auth-only runs:
 | `26605880602` | mixed | Fresh non-service PMAK succeeded for old API-key `/me` and failed `/service-account-tokens` as expected. Fresh supplied access token failed Bearer `/me` with `401`. |
 | `26605968824` | success | Controlled scale run completed: 8 service-account resolver attempts, 8 non-service PMAK baseline attempts, and 4 fresh-token passthrough attempts. |
 | `26606131433` | mixed | Backward compatibility existing PMAK test passed; secret-refresh canary passed; Bearer-only Team ID fallback failed because supplied Bearer token returned `/me` HTTP `401`. |
+| `26606256142` | mixed | Winter Trinity service-account PMAK minted a token and resolved numeric Team ID after parser fix. Secret refresh passed. Bearer-only replay of the minted token still failed `/me` with HTTP `401`. |
+| `26606300164` | mixed | Direct probes confirmed the minted service-account token returned HTTP `401` for `/me` with both `Authorization: Bearer` and `x-access-token`. Backward compatibility and secret refresh still passed. |
 
-Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Jade Global repo still does not contain a valid active service-account API key for `POSTMAN_API_KEY`. The fresh supplied token did not work as a Bearer token for `/me`, so it is not currently suitable for this action's access-token-provided Team ID fallback. Full downstream smoke and full-pipeline service-account war games are blocked until `POSTMAN_API_KEY` is rotated to an active service-account key.
+Interpretation: the non-service PMAK negative control confirms the token endpoint rejects normal PMAKs. The Winter Trinity service-account PMAK validates successful token minting and same-step Team ID resolution. Fresh supplied tokens and minted service-account tokens did not work as Bearer-only credentials for `/me`, so callers should provide `postman-team-id` or provide a PMAK alongside `postman-access-token` for Team ID lookup.
 
 ## Controlled Scale Findings
 
@@ -91,16 +93,32 @@ Backward compatibility conclusion: existing customers that continue passing PMAK
 
 Secret refresh conclusion: the GitHub secret write path works with a token that has repo secret write permission. The canary used explicit `postman-team-id` so the test covered GitHub secret refresh behavior without depending on Bearer `/me` success.
 
+## Winter Trinity Service-Account Findings
+
+The Winter Trinity service-account PMAK changed the result from "invalid key" to "mint succeeds." Production returned `user.teamId` as a number from `/me`, which required the action to normalize numeric Team IDs to strings before writing outputs.
+
+Validated:
+
+- service-account PMAK to access-token exchange succeeds;
+- generated token is masked;
+- numeric Team ID is parsed and exposed as `team-id`;
+- repo secret refresh canary writes, verifies, and cleans up the configured secret names;
+- non-service PMAK old flow remains valid.
+
+Not validated as passing:
+
+- Bearer-only Team ID fallback. The minted token failed `/me` when replayed without an API key. Direct probes with `Authorization: Bearer` and `x-access-token` both returned HTTP `401`.
+
 ## Full Pipeline War Game
 
-After `POSTMAN_API_KEY` is updated to a valid active service-account key:
+After downstream templates are ready to accept the resolved access token:
 
 1. Re-run `service-account-auth-wargame` in `auth-only` mode.
 2. Confirm:
    - old API-key `/me` behavior is recorded;
    - service-account token exchange succeeds;
-   - Bearer-only `/me` succeeds;
-   - Team ID is resolved;
+   - Team ID is resolved in the same action step;
+   - Bearer-only `/me` behavior is recorded, with `postman-team-id` as the documented fallback if it continues to return `401`;
    - invalid-key and missing-input negative tests fail cleanly.
 3. Run `downstream-smoke` mode against one `target_service`.
 4. Compare timing against old Jade Global baselines using:
@@ -121,7 +139,7 @@ scripts/compare-workflow-performance.sh \
 | Invalid or inactive PMAK | Action fails with HTTP status and redacted response. |
 | Personal PMAK sent to service-account token endpoint | Action fails clearly; no token output. |
 | Expired access token provided | Action skips mint, then Team ID `/me` fails clearly. |
-| Bearer-only Team ID fallback | `/me` succeeds without `x-api-key` and returns `team-id`. |
+| Bearer-only Team ID fallback | If supported by the token type, `/me` succeeds without `x-api-key` and returns `team-id`; otherwise the action fails clearly and caller supplies `postman-team-id`. |
 | Token endpoint network failure | Action fails with network error, no token output. |
 | `/me` response without Team ID | Action fails with unable-to-resolve-Team-ID error. |
 | Error response contains token-like fields | Logs redact auth-like keys. |
@@ -136,5 +154,6 @@ scripts/compare-workflow-performance.sh \
 - Document whether service-account PMAKs should work with `/me` via `x-api-key`.
 - Document access-token TTL and recommended refresh cadence.
 - Return Team ID in the token-exchange response when safe, reducing one network call.
+- Allow `/me` or a dedicated identity endpoint to accept short-lived service-account tokens without needing the original API key.
 - Provide stable error codes for inactive key, wrong key type, expired token, and missing permissions.
 - Provide an official CI/CD service-account setup guide with GitHub Actions and ADO examples.

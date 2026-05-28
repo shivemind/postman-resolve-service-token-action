@@ -127,6 +127,13 @@ case "$MOCK_SCENARIO:$url" in
   token_passthrough:*/me)
     write_response 200 '{"user":{"teamId":"team-existing"}}'
     ;;
+  token_passthrough_with_api_key:*/me)
+    if has_header "x-api-key: PMAK-test-api-key"; then
+      write_response 200 '{"team":{"id":"team-from-api-key-lookup"}}'
+    else
+      write_response 401 '{"error":{"message":"api key required for this lookup"}}'
+    fi
+    ;;
   numeric_team_id:*service-account-tokens)
     write_response 200 '{"access_token":"minted-access-token"}'
     ;;
@@ -139,6 +146,9 @@ case "$MOCK_SCENARIO:$url" in
     else
       write_response 200 '{"identity":{"team":"team-bearer-only"}}'
     fi
+    ;;
+  bearer_only_unauthorized:*/me)
+    write_response 401 '{"error":{"name":"unauthorizedError","message":"You are not authorized to perform this action."}}'
     ;;
   invalid_key:*service-account-tokens)
     write_response 401 '{"error":{"message":"inactive key","apiKey":"PMAK-test-api-key","access_token":"minted-access-token","nested":{"secret":"do-not-log"}}}'
@@ -239,11 +249,28 @@ test_access_token_already_provided() {
     assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
 }
 
+test_access_token_with_api_key_team_lookup() {
+  local case_dir
+  case_dir="$(run_resolve "access_token_with_api_key_team_lookup" "token_passthrough_with_api_key" "$TEST_API_KEY" "$TEST_EXISTING_TOKEN" "" "success")"
+  assert_contains "$case_dir/github_output" "skipped=true" &&
+    assert_contains "$case_dir/github_output" "auth-method=provided-access-token" &&
+    assert_contains "$case_dir/github_output" "team-id=team-from-api-key-lookup" &&
+    assert_not_contains "$case_dir/run.log" "service-account-tokens should not have been called"
+}
+
 test_bearer_only_team_id_fallback() {
   local case_dir
   case_dir="$(run_resolve "bearer_only_team_id_fallback" "bearer_only" "" "$TEST_EXISTING_TOKEN" "" "success")"
   assert_contains "$case_dir/github_output" "skipped=true" &&
     assert_contains "$case_dir/github_output" "team-id=team-bearer-only"
+}
+
+test_bearer_only_team_id_fallback_failure_message() {
+  local case_dir
+  case_dir="$(run_resolve "bearer_only_team_id_fallback_failure_message" "bearer_only_unauthorized" "" "$TEST_EXISTING_TOKEN" "" "failure")"
+  assert_contains "$case_dir/run.log" "::error::/me failed (HTTP 401) while resolving team ID from postman-access-token. Provide postman-team-id to skip Bearer-only lookup, or provide postman-api-key for Team ID lookup." &&
+    assert_contains "$case_dir/run.log" "unauthorizedError" &&
+    assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_EXISTING_TOKEN"
 }
 
 test_invalid_or_inactive_api_key_response() {
@@ -259,7 +286,9 @@ test_invalid_or_inactive_api_key_response() {
 test_unable_to_resolve_team_id() {
   local case_dir
   case_dir="$(run_resolve "unable_to_resolve_team_id" "no_team" "$TEST_API_KEY" "" "" "failure")"
-  assert_contains "$case_dir/run.log" "::error::Could not read team id from /me response"
+  assert_contains "$case_dir/run.log" "::error::Could not read team id from /me response. Provide postman-team-id to skip Team ID lookup." &&
+    assert_contains "$case_dir/run.log" "[/me response omitted: response may include account metadata]" &&
+    assert_not_contains "$case_dir/run.log" "No Team Here"
 }
 
 test_network_error() {
@@ -305,7 +334,9 @@ for test_name in \
   test_service_account_api_key_to_access_token \
   test_numeric_team_id_resolution \
   test_access_token_already_provided \
+  test_access_token_with_api_key_team_lookup \
   test_bearer_only_team_id_fallback \
+  test_bearer_only_team_id_fallback_failure_message \
   test_invalid_or_inactive_api_key_response \
   test_unable_to_resolve_team_id \
   test_network_error \
