@@ -78,7 +78,7 @@ Results:
 | Current service-account resolver path | 8 | 8/8 failed because `POSTMAN_API_KEY` is not a valid service-account PMAK. |
 | Fresh access-token passthrough | 4 | 4/4 failed Team ID resolution because Bearer `/me` returned `401`. |
 
-This confirms normal PMAK behavior is stable under modest concurrency and the action handles repeated auth failures without leaking secrets or causing workflow instability. It does not yet validate successful service-account token minting at scale; that remains blocked on a valid service-account PMAK.
+This confirms normal PMAK behavior is stable under modest concurrency and the action handles repeated auth failures without leaking secrets or causing workflow instability. The mocked unit suite also runs multiple successful service-account resolutions in parallel and verifies each invocation keeps its own token, Team ID, and expiry outputs isolated. For repo-secret refresh jobs, use a workflow `concurrency` group because overlapping refresh runs that write the same secret names are naturally last-writer-wins.
 
 ## Compatibility And Secret Refresh Findings
 
@@ -130,6 +130,7 @@ The mocked suite validates token lifecycle behavior without live Postman calls:
 - service-account token responses can expose expiry metadata through `token-expires-at` and `token-expires-in`;
 - provided access-token flows skip minting and leave expiry outputs empty;
 - repeated service-account resolution mints a fresh token each run instead of reusing a prior output;
+- concurrent service-account resolutions keep token, Team ID, and expiry outputs isolated across parallel runs;
 - expired provided tokens fail during Team ID lookup with a clear `/me` error and do not trigger a replacement mint;
 - single-membership `/me` responses can resolve Team ID from the membership list, while multi-team responses without a singular/current team fail and require `postman-team-id`;
 - disabled or deleted service-account keys fail at token mint with the Postman HTTP status and redacted response details;
@@ -162,6 +163,7 @@ The mocked unit suite now covers the failure modes customers are most likely to 
 | Secret refresh missing repo context | Fails before `gh secret set`. |
 | Secret refresh missing resolved token or Team ID | Fails before `gh secret set`. |
 | Secret refresh timing metadata | Writes the configured secrets while preserving token expiry outputs for refresh-cadence checks. |
+| Concurrent resolver invocations | Parallel runs keep output files isolated and do not cross-contaminate token or Team ID values. |
 | Runner without `gh` CLI | Fails with a clear runner setup message. |
 | GitHub token lacks repo secret write permission | Fails with a clear `Failed to write GitHub secret ...` message. |
 

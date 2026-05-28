@@ -172,6 +172,30 @@ case "$MOCK_SCENARIO:$url" in
   lifecycle_refresh_second:*/me)
     write_response 200 '{"team":{"id":"team-minted"}}'
     ;;
+  concurrent_one:*service-account-tokens)
+    sleep 0.2
+    write_response 200 '{"access_token":"concurrent-token-one","expires_in":601,"expires_at":"2026-05-29T00:01:00Z"}'
+    ;;
+  concurrent_one:*/me)
+    sleep 0.1
+    write_response 200 '{"team":{"id":"team-concurrent-one"}}'
+    ;;
+  concurrent_two:*service-account-tokens)
+    sleep 0.1
+    write_response 200 '{"access_token":"concurrent-token-two","expires_in":602,"expires_at":"2026-05-29T00:02:00Z"}'
+    ;;
+  concurrent_two:*/me)
+    sleep 0.2
+    write_response 200 '{"team":{"id":"team-concurrent-two"}}'
+    ;;
+  concurrent_three:*service-account-tokens)
+    sleep 0.15
+    write_response 200 '{"access_token":"concurrent-token-three","expires_in":603,"expires_at":"2026-05-29T00:03:00Z"}'
+    ;;
+  concurrent_three:*/me)
+    sleep 0.05
+    write_response 200 '{"team":{"id":"team-concurrent-three"}}'
+    ;;
   token_passthrough:*service-account-tokens)
     echo "service-account-tokens should not have been called" >&2
     exit 91
@@ -538,6 +562,59 @@ test_service_account_refresh_mints_new_token() {
     assert_secret_only_masked_in_log "$second_dir/run.log" "$second_token"
 }
 
+test_concurrent_resolves_keep_outputs_isolated() {
+  local scenarios=("concurrent_one" "concurrent_two" "concurrent_three")
+  local tokens=("concurrent-token-one" "concurrent-token-two" "concurrent-token-three")
+  local teams=("team-concurrent-one" "team-concurrent-two" "team-concurrent-three")
+  local expires_in=("601" "602" "603")
+  local expires_at=("2026-05-29T00:01:00Z" "2026-05-29T00:02:00Z" "2026-05-29T00:03:00Z")
+  local pids=()
+  local scenario
+  local i
+
+  for i in "${!scenarios[@]}"; do
+    scenario="${scenarios[$i]}"
+    (
+      run_resolve "race_${scenario}" "$scenario" "$TEST_API_KEY" "" "" "success"
+    ) > "$TMP_DIR/${scenario}.path" 2> "$TMP_DIR/${scenario}.stderr" &
+    pids+=("$!")
+  done
+
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      scenario="${scenarios[$i]}"
+      echo "Concurrent resolver failed for $scenario"
+      sed -n '1,160p' "$TMP_DIR/${scenario}.stderr" 2>/dev/null || true
+      return 1
+    fi
+  done
+
+  for i in "${!scenarios[@]}"; do
+    scenario="${scenarios[$i]}"
+    local case_dir
+    case_dir="$(cat "$TMP_DIR/${scenario}.path")"
+    assert_contains "$case_dir/github_output" "access-token=${tokens[$i]}" &&
+      assert_contains "$case_dir/github_output" "team-id=${teams[$i]}" &&
+      assert_contains "$case_dir/github_output" "token-expires-in=${expires_in[$i]}" &&
+      assert_contains "$case_dir/github_output" "token-expires-at=${expires_at[$i]}" &&
+      assert_secret_only_masked_in_log "$case_dir/run.log" "${tokens[$i]}" &&
+      assert_secret_only_masked_in_log "$case_dir/run.log" "$TEST_API_KEY"
+  done
+
+  for i in "${!scenarios[@]}"; do
+    scenario="${scenarios[$i]}"
+    local case_dir
+    case_dir="$(cat "$TMP_DIR/${scenario}.path")"
+    local j
+    for j in "${!scenarios[@]}"; do
+      if [ "$i" != "$j" ]; then
+        assert_not_contains "$case_dir/github_output" "${tokens[$j]}" &&
+          assert_not_contains "$case_dir/github_output" "${teams[$j]}"
+      fi
+    done
+  done
+}
+
 test_numeric_team_id_resolution() {
   local case_dir
   case_dir="$(run_resolve "numeric_team_id_resolution" "numeric_team_id" "$TEST_API_KEY" "" "" "success")"
@@ -823,6 +900,7 @@ for test_name in \
   test_service_account_api_key_to_access_token \
   test_service_account_token_lifecycle_metadata_outputs \
   test_service_account_refresh_mints_new_token \
+  test_concurrent_resolves_keep_outputs_isolated \
   test_numeric_team_id_resolution \
   test_single_membership_team_id_resolution \
   test_ambiguous_multi_team_id_requires_explicit_team_id \

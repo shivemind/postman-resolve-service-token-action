@@ -106,6 +106,10 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: postman-service-token-refresh
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
@@ -119,7 +123,7 @@ jobs:
 
 `github-token` must be a PAT or GitHub App installation token with repo secret write permission. The default workflow `GITHUB_TOKEN` cannot write repo secrets.
 
-Use action outputs for downstream steps in the same workflow run. Refreshed repo secrets are intended for later workflow runs after the refresh completes. Schedule refresh with a buffer shorter than the token TTL reported by `token-expires-in` / `token-expires-at`.
+Use action outputs for downstream steps in the same workflow run. Refreshed repo secrets are intended for later workflow runs after the refresh completes. Use a workflow `concurrency` group so overlapping scheduled or manual refresh runs do not race to update the same secret names. Schedule refresh with a buffer shorter than the token TTL reported by `token-expires-in` / `token-expires-at`.
 
 ### Azure DevOps Adaptation Notes
 
